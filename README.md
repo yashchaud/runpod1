@@ -149,6 +149,32 @@ See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the complete, phase-by-
 .\venv\Scripts\python.exe scripts\test_setup.py
 ```
 
+### Building Docker Images
+
+**Option 1: Automated with GitHub Actions (Recommended)**
+
+Push your code to GitHub and let GitHub Actions build Docker images automatically:
+
+```bash
+git add .
+git commit -m "Update endpoint code"
+git push origin main
+```
+
+Images are built 3x faster than local builds and pushed to Docker Hub automatically. See [GITHUB_ACTIONS_SETUP.md](GITHUB_ACTIONS_SETUP.md) for setup instructions.
+
+**Option 2: Manual Local Build**
+
+```bash
+# Build YOLO endpoint
+docker build -t <your-dockerhub-username>/yolo11-runpod:latest ./endpoints/yolo
+docker push <your-dockerhub-username>/yolo11-runpod:latest
+
+# Build Whisper endpoint
+docker build -t <your-dockerhub-username>/whisper-runpod:latest ./endpoints/whisper
+docker push <your-dockerhub-username>/whisper-runpod:latest
+```
+
 ---
 
 ## 📚 Documentation
@@ -158,6 +184,9 @@ See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the complete, phase-by-
 - [PROGRESS.md](PROGRESS.md) - Current progress tracker
 - [PHASE_0_1_SETUP_GUIDE.md](PHASE_0_1_SETUP_GUIDE.md) - Setup instructions
 - [PHASE_0_1_COMPLETE.md](PHASE_0_1_COMPLETE.md) - Completion summary
+- [GITHUB_ACTIONS_SETUP.md](GITHUB_ACTIONS_SETUP.md) - Automated Docker builds with GitHub Actions
+- [RUNPOD_ENDPOINT_DEPLOYMENT_GUIDE.md](RUNPOD_ENDPOINT_DEPLOYMENT_GUIDE.md) - RunPod deployment guide
+- [ENDPOINT_RESEARCH_SUMMARY.md](ENDPOINT_RESEARCH_SUMMARY.md) - Endpoint research findings
 
 ---
 
