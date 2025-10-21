@@ -1,0 +1,46 @@
+# Python
+venv/
+env/
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Environment variables
+.env
+.env.local
+
+# Data and models
+data/videos/*
+data/frames/*
+!data/videos/.gitkeep
+!data/frames/.gitkeep
+models/
+logs/
+outputs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docker
+docker-compose.override.yml
+
+# Temporary files
+*.tmp
+*.log
+*.cache
