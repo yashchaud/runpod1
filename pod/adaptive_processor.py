@@ -6,8 +6,7 @@ Auto-scales based on available VRAM and processes videos efficiently
 import torch
 import cv2
 import numpy as np
-from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
-from qwen_vl_utils import process_vision_info
+from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
 from PIL import Image
 import json
 import logging
@@ -111,7 +110,7 @@ Identify:
         elif self.config.precision == 'int4':
             load_kwargs['load_in_4bit'] = True
 
-        self.model = Qwen2VLForConditionalGeneration.from_pretrained(
+        self.model = Qwen3VLForConditionalGeneration.from_pretrained(
             'Qwen/Qwen3-VL-8B-Instruct',
             **load_kwargs
         )
@@ -184,17 +183,15 @@ Identify:
                 }
             ]
 
-            # Prepare inputs
-            text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            image_inputs, video_inputs = process_vision_info(messages)
-
-            inputs = self.processor(
-                text=[text],
-                images=image_inputs,
-                videos=video_inputs,
-                padding=True,
+            # Prepare inputs using new Qwen3-VL API
+            inputs = self.processor.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_dict=True,
                 return_tensors="pt"
-            ).to(self.device)
+            )
+            inputs = inputs.to(self.model.device)
 
             # Generate with model lock (thread-safe)
             with self.model_lock:

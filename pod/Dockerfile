@@ -13,11 +13,10 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /workspace
 
-# Install transformers and ML packages (PyTorch already in base image!)
+# Install transformers from git (required for Qwen3-VL support)
 RUN pip3 install --no-cache-dir \
-    transformers>=4.45.0 \
+    git+https://github.com/huggingface/transformers \
     accelerate \
-    qwen-vl-utils \
     einops && \
     rm -rf /root/.cache/pip
 
