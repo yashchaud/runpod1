@@ -1,6 +1,124 @@
-# Video Understanding Agent - RunPod Serverless
+# Video Processing with RunPod - Serverless & Pod Options
 
-A real-time video understanding system using RunPod serverless endpoints for scalable, cost-effective AI inference.
+Intelligent video processing system for Google Meet recordings, screen shares, and app demonstrations using Qwen3-VL-8B (October 2025).
+
+## 🎯 Two Deployment Options
+
+### Option 1: Pod (Recommended) ⭐
+Persistent GPU instance with adaptive scaling - **best for screen recordings and long videos**.
+
+- ✅ **Latest Model**: Qwen3-VL-8B-Instruct (Oct 15, 2025) with 32-language OCR
+- ✅ **Auto-Scaling**: Adapts to 24GB / 48GB / 80GB VRAM automatically
+- ✅ **Fast**: 1-hour video in 15 minutes (24GB) or 6 minutes (80GB)
+- ✅ **Cost-Effective**: $0.06 per video (Spot pricing)
+- ✅ **Screen Understanding**: Reads UI text, detects elements, understands context
+
+**Perfect for**: Google Meet recordings, app demos, screen shares, long videos (>10 min)
+
+[📖 Pod Documentation](pod/README.md) | [⚖️ Pod vs Serverless Comparison](POD_VS_SERVERLESS.md)
+
+### Option 2: Serverless
+Auto-scaling functions for multiple models - **best for short clips and multi-model workflows**.
+
+- ⚠️ **YOLO Limitation**: Cannot analyze screen content (detects generic objects only)
+- ✅ **Multiple Models**: Can run YOLO + Whisper + other models independently
+- ✅ **No Management**: Auto-scales from 0 to N workers
+- ⚠️ **Slower**: 35 minutes for 1-hour video
+- ⚠️ **More Expensive**: ~10× cost vs Pod for long videos
+
+**Perfect for**: Short videos (<5 min), sporadic processing, multi-model workflows
+
+[📖 Serverless Documentation](#serverless-documentation-legacy)
+
+---
+
+## 🚀 Quick Start: Deploy Pod (5 minutes)
+
+### Step 1: Build Docker Image
+
+```bash
+cd pod
+chmod +x deploy.sh
+./deploy.sh your-docker-username
+```
+
+### Step 2: Deploy to RunPod
+
+1. Go to [RunPod Pods](https://www.runpod.io/console/pods)
+2. Click "Deploy"
+3. Select **RTX 4090 Spot** (24GB, $0.25/hour)
+4. Container Settings:
+   - Docker Image: `your-docker-username/video-processor:latest`
+   - Expose HTTP Ports: `8000`
+   - Container Disk: `50GB`
+5. Deploy and copy your pod URL
+
+### Step 3: Process Your First Video
+
+```bash
+# Install client dependencies
+pip install requests
+
+# Process video
+python scripts/process_video_pod.py \
+    "your-video.mp4" \
+    --pod-url "https://your-pod-id-8000.proxy.runpod.net" \
+    --mode screen_share \
+    --output results.json
+```
+
+**That's it!** Your video will be analyzed with:
+- Full screen content understanding
+- UI element detection with positions
+- Text extraction (OCR)
+- Scene descriptions and context
+- Activity and feature identification
+
+[📖 Detailed Pod Documentation](pod/README.md)
+
+---
+
+## 📊 Cost & Performance Comparison
+
+**1-hour Google Meet recording with app demo:**
+
+| Method | Time | Cost | Screen Analysis |
+|--------|------|------|----------------|
+| **Pod (RTX 4090 Spot)** | 15 min | **$0.06** | ✅ Full understanding |
+| **Pod (A100 80GB Spot)** | 6 min | **$0.15** | ✅ Full understanding |
+| Serverless YOLO | 35 min | $0.63 | ❌ Useless for screens |
+
+**Winner**: Pod is 2-3× faster and 10× cheaper, and actually understands screen content!
+
+[⚖️ See detailed comparison](POD_VS_SERVERLESS.md)
+
+---
+
+## 📚 Documentation
+
+### Pod (Recommended)
+- [📖 Pod Setup & Usage Guide](pod/README.md) - Complete pod documentation
+- [⚖️ Pod vs Serverless](POD_VS_SERVERLESS.md) - Which to use and why
+- [🎯 VLM vs YOLO](VLM_VS_YOLO.md) - Why YOLO fails for screen recordings
+
+### Serverless (Legacy)
+- [📖 Serverless Documentation](#serverless-documentation-legacy) - Original serverless setup
+- [📖 GitHub Actions Setup](GITHUB_ACTIONS_SETUP.md) - Automated Docker builds
+- [📖 RunPod Endpoint Deployment](RUNPOD_ENDPOINT_DEPLOYMENT_GUIDE.md) - Serverless deployment
+
+### General
+- [📋 Implementation Plan](IMPLEMENTATION_PLAN.md) - Complete project roadmap
+- [📄 PRD](PRD.md) - Product requirements
+- [📊 Progress Tracker](PROGRESS.md) - Current status
+
+---
+
+<a name="serverless-documentation-legacy"></a>
+## 📦 Serverless Documentation (Legacy)
+
+> **Note**: The serverless approach is not recommended for Google Meet recordings or screen shares.
+> YOLO cannot analyze screen content - it only detects generic objects (person, laptop, tv).
+> See [VLM_VS_YOLO.md](VLM_VS_YOLO.md) for details.
 
 ## 🎯 Project Status
 
