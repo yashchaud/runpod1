@@ -275,7 +275,7 @@ Identify:
         Analyze a video or video chunk using Qwen3-VL's native video support
 
         Args:
-            video_path: Path to video file
+            video_path: Path to video file (or extracted chunk file)
             chunk: Optional VideoChunk for context
             progress_callback: Optional callback function for progress updates
 
@@ -283,7 +283,7 @@ Identify:
             Video analysis result
         """
         chunk_info = f"chunk {chunk.chunk_id+1}/{chunk.total_chunks}" if chunk else "video"
-        logger.info(f"Analyzing {chunk_info} with Qwen3-VL...")
+        logger.info(f"Analyzing {chunk_info} with Qwen3-VL (file: {Path(video_path).name})...")
 
         if progress_callback and chunk:
             progress_callback({
@@ -472,23 +472,43 @@ Identify:
                     'message': f'Processing {total_chunks} chunks in parallel...'
                 })
 
-            # Process chunks in parallel batches
-            chunk_results = []
-            max_concurrent = self.config.max_concurrent_batches
+            # Create temp directory for chunk files
+            import tempfile
+            temp_dir = tempfile.mkdtemp(prefix="video_chunks_")
+            logger.info(f"Created temp directory for chunks: {temp_dir}")
 
-            with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
-                # Submit all chunks
-                future_to_chunk = {
-                    executor.submit(self.analyze_video_chunk, str(video_path), chunk, progress_callback): chunk
-                    for chunk in chunks
-                }
+            try:
+                # Extract all chunks first (fast with ffmpeg copy mode)
+                chunk_files = []
+                for i, chunk in enumerate(chunks):
+                    chunk_file = Path(temp_dir) / f"chunk_{chunk.chunk_id:03d}.mp4"
+                    self.chunker.extract_chunk_video(chunk, str(chunk_file))
+                    chunk_files.append((chunk, str(chunk_file)))
+                    logger.info(f"Extracted chunk {i+1}/{total_chunks}: {chunk_file.name}")
 
-                # Collect results as they complete
-                for i, future in enumerate(as_completed(future_to_chunk)):
-                    chunk = future_to_chunk[future]
-                    try:
-                        result = future.result()
-                        chunk_results.append(result)
+                if progress_callback:
+                    progress_callback({
+                        'progress': 15.0,
+                        'message': f'All {total_chunks} chunks extracted, starting parallel analysis...'
+                    })
+
+                # Process chunks in parallel batches
+                chunk_results = []
+                max_concurrent = self.config.max_concurrent_batches
+
+                with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
+                    # Submit all chunks with their extracted files
+                    future_to_chunk = {
+                        executor.submit(self.analyze_video_chunk, chunk_file, chunk, progress_callback): chunk
+                        for chunk, chunk_file in chunk_files
+                    }
+
+                    # Collect results as they complete
+                    for i, future in enumerate(as_completed(future_to_chunk)):
+                        chunk = future_to_chunk[future]
+                        try:
+                            result = future.result()
+                            chunk_results.append(result)
 
                         # Progress update WITH chunk result data
                         progress = 10.0 + (i + 1) / total_chunks * 80.0  # 10% to 90%
@@ -514,6 +534,15 @@ Identify:
 
                     except Exception as e:
                         logger.error(f"Chunk {chunk.chunk_id} failed: {e}")
+
+            finally:
+                # Cleanup temporary chunk files
+                import shutil
+                try:
+                    shutil.rmtree(temp_dir)
+                    logger.info(f"Cleaned up temp directory: {temp_dir}")
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup temp dir: {e}")
 
             # Aggregate results
             if progress_callback:
