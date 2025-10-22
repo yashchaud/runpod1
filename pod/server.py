@@ -165,17 +165,7 @@ async def process_video(
     # Generate job ID
     job_id = str(uuid.uuid4())
 
-    # Save uploaded file
-    video_path = UPLOAD_DIR / f"{job_id}_{video.filename}"
-
-    try:
-        async with aiofiles.open(video_path, 'wb') as f:
-            content = await video.read()
-            await f.write(content)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save video: {e}")
-
-    # Create job
+    # Create job FIRST (before uploading) to return job_id faster
     job = Job(
         job_id=job_id,
         status=JobStatus.PENDING,
@@ -188,26 +178,78 @@ async def process_video(
     # Save job metadata
     job_file = JOBS_DIR / f"{job_id}.json"
     with open(job_file, 'w') as f:
-        json.dump(job.dict(), f, indent=2)
+        json.dump(job.model_dump(), f, indent=2)
 
-    # Queue processing task
-    background_tasks.add_task(process_job, job_id, str(video_path), mode, chunk_duration)
+    # RETURN IMMEDIATELY so client can start streaming
+    # Upload and processing happen in background
+    async def upload_and_process():
+        """Background task to upload and process video"""
+        video_path = UPLOAD_DIR / f"{job_id}_{video.filename}"
+
+        # Create progress queue early for upload status
+        progress_queue = Queue()
+        progress_queues[job_id] = progress_queue
+
+        try:
+            # Notify about upload starting
+            progress_queue.put({
+                'status': 'uploading',
+                'progress': 0.0,
+                'message': 'Uploading video to server...'
+            })
+
+            # Save uploaded file
+            async with aiofiles.open(video_path, 'wb') as f:
+                content = await video.read()
+                await f.write(content)
+
+            logger.info(f"Video uploaded for job {job_id}: {video.filename}")
+
+            progress_queue.put({
+                'status': 'uploaded',
+                'progress': 5.0,
+                'message': 'Video uploaded successfully, starting processing...'
+            })
+
+            # Start processing
+            await process_job(job_id, str(video_path), mode, chunk_duration)
+
+        except Exception as e:
+            logger.error(f"Upload/processing failed for job {job_id}: {e}")
+            job.status = JobStatus.FAILED
+            job.error = str(e)
+            save_job(job)
+
+            if job_id in progress_queues:
+                progress_queues[job_id].put({
+                    'status': 'failed',
+                    'progress': 0,
+                    'message': f'Upload/processing failed: {str(e)}'
+                })
+                progress_queues[job_id].put(None)  # Signal end
+
+    # Queue upload and processing
+    background_tasks.add_task(upload_and_process)
 
     logger.info(f"Job {job_id} created for {video.filename}")
 
     return {
         "job_id": job_id,
         "status": job.status,
-        "message": "Job queued for processing"
+        "message": "Job queued for processing",
+        "stream_url": f"/jobs/{job_id}/stream"
     }
 
 async def process_job(job_id: str, video_path: str, mode: str, chunk_duration: Optional[float] = None):
     """Background task to process video"""
     job = jobs[job_id]
 
-    # Create progress queue for this job
-    progress_queue = Queue()
-    progress_queues[job_id] = progress_queue
+    # Get or create progress queue for this job
+    if job_id not in progress_queues:
+        progress_queue = Queue()
+        progress_queues[job_id] = progress_queue
+    else:
+        progress_queue = progress_queues[job_id]
 
     def progress_callback(update: Dict[str, Any]):
         """Callback to send progress updates"""
@@ -281,7 +323,7 @@ def save_job(job: Job):
     """Save job metadata to disk"""
     job_file = JOBS_DIR / f"{job.job_id}.json"
     with open(job_file, 'w') as f:
-        json.dump(job.dict(), f, indent=2)
+        json.dump(job.model_dump(), f, indent=2)
 
 @app.get("/jobs")
 async def list_jobs():
