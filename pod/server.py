@@ -77,7 +77,11 @@ async def startup_event():
     global processor
     logger.info("Initializing video processor...")
     try:
-        processor = AdaptiveVideoProcessor(mode="screen_share")
+        processor = AdaptiveVideoProcessor(
+            mode="screen_share",
+            chunk_duration=60.0,  # 60 second chunks by default
+            use_chunking=True
+        )
         logger.info("Processor initialized successfully!")
     except Exception as e:
         logger.error(f"Failed to initialize processor: {e}")
@@ -133,7 +137,8 @@ async def health_check():
 async def process_video(
     background_tasks: BackgroundTasks,
     video: UploadFile = File(...),
-    mode: str = Form("screen_share")
+    mode: str = Form("screen_share"),
+    chunk_duration: Optional[float] = Form(None)
 ):
     """
     Submit a video for processing
@@ -141,6 +146,10 @@ async def process_video(
     Args:
         video: Video file (mp4, avi, mov, etc.)
         mode: Analysis mode (screen_share, ui_detection, meeting_analysis, app_demo)
+        chunk_duration: Optional chunk duration in seconds (default: 60s).
+                       Videos are split into chunks for better depth and quality.
+                       Use larger chunks (90-120s) for high-level overview,
+                       smaller chunks (30-45s) for detailed analysis.
 
     Returns:
         Job information with job_id for tracking
@@ -182,7 +191,7 @@ async def process_video(
         json.dump(job.dict(), f, indent=2)
 
     # Queue processing task
-    background_tasks.add_task(process_job, job_id, str(video_path), mode)
+    background_tasks.add_task(process_job, job_id, str(video_path), mode, chunk_duration)
 
     logger.info(f"Job {job_id} created for {video.filename}")
 
@@ -192,7 +201,7 @@ async def process_video(
         "message": "Job queued for processing"
     }
 
-async def process_job(job_id: str, video_path: str, mode: str):
+async def process_job(job_id: str, video_path: str, mode: str, chunk_duration: Optional[float] = None):
     """Background task to process video"""
     job = jobs[job_id]
 
@@ -223,9 +232,15 @@ async def process_job(job_id: str, video_path: str, mode: str):
         # Process video
         result_path = RESULTS_DIR / f"{job_id}_result.json"
 
-        # Update processor mode
+        # Update processor configuration
         processor.mode = mode
         processor.prompt = processor.PROMPTS.get(mode, processor.PROMPTS["screen_share"])
+
+        # Update chunk duration if specified
+        if chunk_duration is not None:
+            processor.chunk_duration = chunk_duration
+            processor.chunker.chunk_duration = chunk_duration
+            logger.info(f"Using custom chunk duration: {chunk_duration}s")
 
         # Process with progress callback
         result = processor.process_video(video_path, str(result_path), progress_callback=progress_callback)
@@ -405,6 +420,12 @@ async def get_config():
 
     return {
         "mode": processor.mode,
+        "chunking": {
+            "enabled": processor.use_chunking,
+            "chunk_duration": processor.chunk_duration,
+            "overlap": processor.chunker.overlap,
+            "scene_detection": processor.chunker.use_scene_detection
+        },
         "config": {
             "batch_size": processor.config.batch_size,
             "max_concurrent_batches": processor.config.max_concurrent_batches,

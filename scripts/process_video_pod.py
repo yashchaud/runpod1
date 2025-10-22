@@ -34,13 +34,20 @@ class PodClient:
         response.raise_for_status()
         return response.json()
 
-    def submit_video(self, video_path: str, mode: str = "screen_share") -> dict:
+    def submit_video(
+        self,
+        video_path: str,
+        mode: str = "screen_share",
+        chunk_duration: Optional[float] = None
+    ) -> dict:
         """
         Submit video for processing
 
         Args:
             video_path: Path to video file
             mode: Analysis mode (screen_share, ui_detection, meeting_analysis, app_demo)
+            chunk_duration: Optional chunk duration in seconds (default: 60s)
+                          Use 30-45s for detailed analysis, 90-120s for overview
 
         Returns:
             Job information
@@ -52,10 +59,15 @@ class PodClient:
 
         print(f"Uploading video: {video_path.name}")
         print(f"Mode: {mode}")
+        if chunk_duration:
+            print(f"Chunk Duration: {chunk_duration}s")
 
         with open(video_path, 'rb') as f:
             files = {'video': (video_path.name, f, 'video/mp4')}
             data = {'mode': mode}
+
+            if chunk_duration is not None:
+                data['chunk_duration'] = str(chunk_duration)
 
             response = self.session.post(
                 f"{self.base_url}/process",
@@ -244,7 +256,8 @@ class PodClient:
         mode: str = "screen_share",
         output_path: Optional[str] = None,
         poll_interval: int = 10,
-        use_streaming: bool = True
+        use_streaming: bool = True,
+        chunk_duration: Optional[float] = None
     ) -> dict:
         """
         Submit video and wait for completion
@@ -254,6 +267,8 @@ class PodClient:
             mode: Analysis mode
             output_path: Path to save result JSON
             poll_interval: Seconds between status checks
+            use_streaming: Use SSE streaming for real-time updates
+            chunk_duration: Optional chunk duration in seconds
 
         Returns:
             Processing result
@@ -271,15 +286,18 @@ class PodClient:
         # Get config
         config = self.get_config()
         print(f"\nProcessor Configuration:")
+        if 'chunking' in config:
+            print(f"  Video Chunking: {'Enabled' if config['chunking']['enabled'] else 'Disabled'}")
+            print(f"  Chunk Duration: {config['chunking']['chunk_duration']}s")
+            print(f"  Scene Detection: {'Enabled' if config['chunking']['scene_detection'] else 'Disabled'}")
         print(f"  Batch Size: {config['config']['batch_size']}")
         print(f"  Concurrent Batches: {config['config']['max_concurrent_batches']}")
         print(f"  VRAM: {config['config']['total_vram_gb']:.1f} GB")
         print(f"  Precision: {config['config']['precision']}")
-        print(f"  Frame Sample Rate: 1 every {config['config']['frame_sample_rate']} frames")
 
         # Submit video
         print(f"\n{'='*60}")
-        job_info = self.submit_video(video_path, mode)
+        job_info = self.submit_video(video_path, mode, chunk_duration)
         job_id = job_info['job_id']
 
         print(f"\nJob submitted!")
@@ -328,6 +346,11 @@ def main():
     parser.add_argument("--poll-interval", type=int, default=10, help="Status check interval (seconds)")
     parser.add_argument("--no-wait", action="store_true", help="Submit and return immediately")
     parser.add_argument("--no-streaming", action="store_true", help="Use polling instead of streaming for progress updates")
+    parser.add_argument(
+        "--chunk-duration",
+        type=float,
+        help="Chunk duration in seconds (default: 60s). Use 30-45s for detailed analysis, 90-120s for overview"
+    )
 
     args = parser.parse_args()
 
@@ -337,7 +360,7 @@ def main():
     try:
         if args.no_wait:
             # Just submit
-            job_info = client.submit_video(args.video_path, args.mode)
+            job_info = client.submit_video(args.video_path, args.mode, args.chunk_duration)
             print(json.dumps(job_info, indent=2))
         else:
             # Submit and wait
@@ -346,7 +369,8 @@ def main():
                 mode=args.mode,
                 output_path=args.output,
                 poll_interval=args.poll_interval,
-                use_streaming=not args.no_streaming
+                use_streaming=not args.no_streaming,
+                chunk_duration=args.chunk_duration
             )
 
     except requests.exceptions.RequestException as e:

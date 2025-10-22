@@ -18,6 +18,7 @@ import time
 
 from vram_detector import VRAMDetector, AdaptiveConfig
 from frame_sampler import FrameSampler, FrameInfo
+from video_chunker import VideoChunker, VideoChunk
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -67,15 +68,24 @@ Identify:
 6. Key features being highlighted"""
     }
 
-    def __init__(self, mode: str = "screen_share"):
+    def __init__(
+        self,
+        mode: str = "screen_share",
+        chunk_duration: float = 60.0,
+        use_chunking: bool = True
+    ):
         """
         Initialize processor with adaptive configuration
 
         Args:
             mode: Analysis mode (screen_share, ui_detection, meeting_analysis, app_demo)
+            chunk_duration: Duration of each video chunk in seconds (default: 60s)
+            use_chunking: Whether to use video chunking for long videos
         """
         self.mode = mode
         self.prompt = self.PROMPTS.get(mode, self.PROMPTS["screen_share"])
+        self.chunk_duration = chunk_duration
+        self.use_chunking = use_chunking
 
         # Detect VRAM and get adaptive config
         logger.info("Detecting GPU configuration...")
@@ -125,6 +135,15 @@ Identify:
         self.sampler = FrameSampler(
             sample_rate=self.config.frame_sample_rate,
             detect_scene_changes=True
+        )
+
+        # Initialize video chunker
+        self.chunker = VideoChunker(
+            chunk_duration=self.chunk_duration,
+            overlap=2.0,
+            use_scene_detection=True,
+            min_chunk_duration=10.0,
+            max_chunk_duration=120.0
         )
 
         # Thread safety
@@ -231,24 +250,39 @@ Identify:
 
         return results
 
-    def analyze_video_direct(self, video_path: str, progress_callback=None) -> Dict[str, Any]:
+    def analyze_video_chunk(
+        self,
+        video_path: str,
+        chunk: VideoChunk = None,
+        progress_callback=None
+    ) -> Dict[str, Any]:
         """
-        Analyze video directly using Qwen3-VL's native video support
+        Analyze a video or video chunk using Qwen3-VL's native video support
 
         Args:
             video_path: Path to video file
+            chunk: Optional VideoChunk for context
             progress_callback: Optional callback function for progress updates
 
         Returns:
             Video analysis result
         """
-        logger.info(f"Analyzing video directly with Qwen3-VL...")
+        chunk_info = f"chunk {chunk.chunk_id+1}/{chunk.total_chunks}" if chunk else "video"
+        logger.info(f"Analyzing {chunk_info} with Qwen3-VL...")
 
-        if progress_callback:
+        if progress_callback and chunk:
             progress_callback({
-                'progress': 10.0,
-                'message': 'Preparing video for analysis...'
+                'progress': (chunk.chunk_id / chunk.total_chunks) * 100,
+                'message': f'Processing chunk {chunk.chunk_id+1}/{chunk.total_chunks} ({chunk.start_time:.1f}s-{chunk.end_time:.1f}s)...',
+                'chunk_id': chunk.chunk_id,
+                'total_chunks': chunk.total_chunks
             })
+
+        # Enhanced prompt with temporal context for chunks
+        prompt = self.prompt
+        if chunk:
+            temporal_context = f"\n\nTemporal Context: This is segment {chunk.chunk_id+1} of {chunk.total_chunks}, covering {chunk.start_time:.1f}s to {chunk.end_time:.1f}s of the video ({chunk.duration:.1f}s duration)."
+            prompt = prompt + temporal_context
 
         # Prepare video message using Qwen3-VL video support
         messages = [
@@ -256,16 +290,10 @@ Identify:
                 "role": "user",
                 "content": [
                     {"type": "video", "video": video_path},
-                    {"type": "text", "text": self.prompt}
+                    {"type": "text", "text": prompt}
                 ]
             }
         ]
-
-        if progress_callback:
-            progress_callback({
-                'progress': 30.0,
-                'message': 'Processing video with Qwen3-VL...'
-            })
 
         # Process video
         inputs = self.processor.apply_chat_template(
@@ -277,26 +305,15 @@ Identify:
         )
         inputs = inputs.to(self.model.device)
 
-        if progress_callback:
-            progress_callback({
-                'progress': 50.0,
-                'message': 'Generating analysis...'
-            })
-
-        # Generate
-        with torch.no_grad():
-            generated_ids = self.model.generate(
-                **inputs,
-                max_new_tokens=2048,  # More tokens for full video analysis
-                do_sample=False,
-                temperature=0.7
-            )
-
-        if progress_callback:
-            progress_callback({
-                'progress': 80.0,
-                'message': 'Decoding results...'
-            })
+        # Generate with model lock (thread-safe)
+        with self.model_lock:
+            with torch.no_grad():
+                generated_ids = self.model.generate(
+                    **inputs,
+                    max_new_tokens=2048,  # More tokens for chunk analysis
+                    do_sample=False,
+                    temperature=0.7
+                )
 
         # Decode
         generated_ids_trimmed = [
@@ -314,18 +331,72 @@ Identify:
         except json.JSONDecodeError:
             analysis = {"analysis": output_text}
 
-        if progress_callback:
-            progress_callback({
-                'progress': 90.0,
-                'message': 'Finalizing results...'
+        # Add chunk metadata
+        result = {
+            'analysis': analysis
+        }
+
+        if chunk:
+            result['chunk_info'] = {
+                'chunk_id': chunk.chunk_id,
+                'total_chunks': chunk.total_chunks,
+                'start_time': chunk.start_time,
+                'end_time': chunk.end_time,
+                'duration': chunk.duration
+            }
+
+        logger.info(f"Analysis of {chunk_info} complete!")
+        return result
+
+    def aggregate_chunk_results(self, chunk_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Aggregate results from multiple video chunks into coherent summary
+
+        Args:
+            chunk_results: List of analysis results from each chunk
+
+        Returns:
+            Aggregated analysis with timeline and overall summary
+        """
+        logger.info(f"Aggregating {len(chunk_results)} chunk results...")
+
+        # Build timeline
+        timeline = []
+        all_text = []
+
+        for result in chunk_results:
+            chunk_info = result.get('chunk_info', {})
+            analysis = result.get('analysis', {})
+
+            timeline.append({
+                'chunk_id': chunk_info.get('chunk_id', 0),
+                'start_time': chunk_info.get('start_time', 0),
+                'end_time': chunk_info.get('end_time', 0),
+                'duration': chunk_info.get('duration', 0),
+                'analysis': analysis
             })
 
-        logger.info(f"Video analysis complete!")
-        return analysis
+            # Collect text for overall summary
+            if isinstance(analysis, dict):
+                all_text.append(json.dumps(analysis))
+            else:
+                all_text.append(str(analysis))
+
+        # Sort by chunk_id
+        timeline.sort(key=lambda x: x['chunk_id'])
+
+        aggregated = {
+            'timeline': timeline,
+            'total_chunks': len(chunk_results),
+            'aggregation_method': 'temporal_sequencing'
+        }
+
+        logger.info("Aggregation complete!")
+        return aggregated
 
     def process_video(self, video_path: str, output_path: str = None, progress_callback=None) -> Dict[str, Any]:
         """
-        Process entire video with parallel batch processing
+        Process entire video with intelligent chunking and parallel batch processing
 
         Args:
             video_path: Path to video file
@@ -343,56 +414,156 @@ Identify:
 
         if progress_callback:
             progress_callback({
-                'progress': 5.0,
+                'progress': 2.0,
                 'message': 'Loading video information...'
             })
 
         # Get video info
         video_info = self.sampler.get_video_info(str(video_path))
+        duration_seconds = video_info['duration_seconds']
 
         logger.info(f"\nProcessing video: {video_path.name}")
-        logger.info(f"  Duration: {video_info['duration_minutes']:.1f} minutes")
+        logger.info(f"  Duration: {video_info['duration_minutes']:.1f} minutes ({duration_seconds:.1f}s)")
         logger.info(f"  Resolution: {video_info['width']}x{video_info['height']}")
         logger.info(f"  Total Frames: {video_info['total_frames']:,}")
 
-        # Use direct video analysis (more efficient!)
-        logger.info("\nUsing direct video analysis (native Qwen3-VL video support)")
+        # Decide on processing strategy
+        use_chunking = self.use_chunking and duration_seconds > self.chunk_duration * 1.5
 
-        try:
-            analysis_result = self.analyze_video_direct(str(video_path), progress_callback)
-        except Exception as e:
-            logger.warning(f"Direct video analysis failed: {e}. Falling back to frame-by-frame analysis.")
+        if use_chunking:
+            logger.info(f"\nUsing CHUNKED video analysis (chunks of ~{self.chunk_duration}s)")
+            logger.info("  Benefits: Better depth, quality, and understanding per segment")
+
+            if progress_callback:
+                progress_callback({
+                    'progress': 5.0,
+                    'message': 'Creating video chunks...'
+                })
+
+            # Create chunks
+            chunks = self.chunker.create_chunks(str(video_path))
+            total_chunks = len(chunks)
+
+            logger.info(f"  Created {total_chunks} chunks for optimal processing")
 
             if progress_callback:
                 progress_callback({
                     'progress': 10.0,
-                    'message': 'Falling back to frame-by-frame analysis...'
+                    'message': f'Processing {total_chunks} chunks in parallel...'
                 })
 
-            # Fallback to frame-by-frame
-            return self._process_video_frames(video_path, output_path, progress_callback, video_info, start_time)
+            # Process chunks in parallel batches
+            chunk_results = []
+            max_concurrent = self.config.max_concurrent_batches
 
-        total_time = time.time() - start_time
+            with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
+                # Submit all chunks
+                future_to_chunk = {
+                    executor.submit(self.analyze_video_chunk, str(video_path), chunk, progress_callback): chunk
+                    for chunk in chunks
+                }
 
-        # Create final output
-        output = {
-            'video_info': video_info,
-            'processing_config': {
-                'method': 'direct_video_analysis',
-                'precision': self.config.precision,
-                'mode': self.mode
-            },
-            'processing_stats': {
-                'processing_time_seconds': total_time,
-                'processing_time_minutes': total_time / 60,
-                'efficiency_ratio': total_time / video_info['duration_seconds']
-            },
-            'analysis': analysis_result
-        }
+                # Collect results as they complete
+                for i, future in enumerate(as_completed(future_to_chunk)):
+                    chunk = future_to_chunk[future]
+                    try:
+                        result = future.result()
+                        chunk_results.append(result)
+
+                        # Progress update
+                        progress = 10.0 + (i + 1) / total_chunks * 80.0  # 10% to 90%
+                        elapsed = time.time() - start_time
+
+                        if progress_callback:
+                            progress_callback({
+                                'progress': progress,
+                                'message': f'Completed chunk {i+1}/{total_chunks} ({elapsed:.1f}s elapsed)',
+                                'chunks_completed': i + 1,
+                                'total_chunks': total_chunks
+                            })
+
+                        logger.info(f"Chunk {chunk.chunk_id+1}/{total_chunks} completed ({elapsed:.1f}s elapsed)")
+
+                    except Exception as e:
+                        logger.error(f"Chunk {chunk.chunk_id} failed: {e}")
+
+            # Aggregate results
+            if progress_callback:
+                progress_callback({
+                    'progress': 90.0,
+                    'message': 'Aggregating results from all chunks...'
+                })
+
+            aggregated_analysis = self.aggregate_chunk_results(chunk_results)
+
+            total_time = time.time() - start_time
+
+            # Create final output
+            output = {
+                'video_info': video_info,
+                'processing_config': {
+                    'method': 'chunked_video_analysis',
+                    'chunk_duration': self.chunk_duration,
+                    'total_chunks': total_chunks,
+                    'max_concurrent_batches': max_concurrent,
+                    'precision': self.config.precision,
+                    'mode': self.mode
+                },
+                'processing_stats': {
+                    'processing_time_seconds': total_time,
+                    'processing_time_minutes': total_time / 60,
+                    'efficiency_ratio': total_time / duration_seconds,
+                    'avg_time_per_chunk': total_time / total_chunks if total_chunks > 0 else 0
+                },
+                'results': aggregated_analysis
+            }
+
+        else:
+            # Short video - process directly without chunking
+            logger.info(f"\nUsing DIRECT video analysis (video < {self.chunk_duration*1.5}s)")
+
+            if progress_callback:
+                progress_callback({
+                    'progress': 10.0,
+                    'message': 'Processing short video directly...'
+                })
+
+            try:
+                analysis_result = self.analyze_video_chunk(str(video_path), None, progress_callback)
+
+                total_time = time.time() - start_time
+
+                # Create final output
+                output = {
+                    'video_info': video_info,
+                    'processing_config': {
+                        'method': 'direct_video_analysis',
+                        'precision': self.config.precision,
+                        'mode': self.mode
+                    },
+                    'processing_stats': {
+                        'processing_time_seconds': total_time,
+                        'processing_time_minutes': total_time / 60,
+                        'efficiency_ratio': total_time / duration_seconds
+                    },
+                    'results': analysis_result
+                }
+
+            except Exception as e:
+                logger.warning(f"Direct video analysis failed: {e}. Falling back to frame-by-frame analysis.")
+
+                if progress_callback:
+                    progress_callback({
+                        'progress': 10.0,
+                        'message': 'Falling back to frame-by-frame analysis...'
+                    })
+
+                # Fallback to frame-by-frame
+                return self._process_video_frames(video_path, output_path, progress_callback, video_info, start_time)
 
         logger.info(f"\nProcessing Complete!")
         logger.info(f"  Time: {total_time/60:.1f} minutes")
-        logger.info(f"  Efficiency: {total_time/video_info['duration_seconds']*100:.1f}% of video length")
+        logger.info(f"  Efficiency: {total_time/duration_seconds*100:.1f}% of video length")
 
         # Save results
         if output_path is None:
