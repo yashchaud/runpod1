@@ -510,30 +510,30 @@ Identify:
                             result = future.result()
                             chunk_results.append(result)
 
-                        # Progress update WITH chunk result data
-                        progress = 10.0 + (i + 1) / total_chunks * 80.0  # 10% to 90%
-                        elapsed = time.time() - start_time
+                            # Progress update WITH chunk result data
+                            progress = 10.0 + (i + 1) / total_chunks * 80.0  # 10% to 90%
+                            elapsed = time.time() - start_time
 
-                        if progress_callback:
-                            progress_callback({
-                                'progress': progress,
-                                'message': f'Completed chunk {i+1}/{total_chunks} ({elapsed:.1f}s elapsed)',
-                                'chunks_completed': i + 1,
-                                'total_chunks': total_chunks,
-                                # Stream the chunk result immediately!
-                                'chunk_result': {
-                                    'chunk_id': chunk.chunk_id,
-                                    'start_time': chunk.start_time,
-                                    'end_time': chunk.end_time,
-                                    'duration': chunk.duration,
-                                    'analysis': result.get('analysis', {})
-                                }
-                            })
+                            if progress_callback:
+                                progress_callback({
+                                    'progress': progress,
+                                    'message': f'Completed chunk {i+1}/{total_chunks} ({elapsed:.1f}s elapsed)',
+                                    'chunks_completed': i + 1,
+                                    'total_chunks': total_chunks,
+                                    # Stream the chunk result immediately!
+                                    'chunk_result': {
+                                        'chunk_id': chunk.chunk_id,
+                                        'start_time': chunk.start_time,
+                                        'end_time': chunk.end_time,
+                                        'duration': chunk.duration,
+                                        'analysis': result.get('analysis', {})
+                                    }
+                                })
 
-                        logger.info(f"Chunk {chunk.chunk_id+1}/{total_chunks} completed ({elapsed:.1f}s elapsed)")
+                            logger.info(f"Chunk {chunk.chunk_id+1}/{total_chunks} completed ({elapsed:.1f}s elapsed)")
 
-                    except Exception as e:
-                        logger.error(f"Chunk {chunk.chunk_id} failed: {e}")
+                        except Exception as e:
+                            logger.error(f"Chunk {chunk.chunk_id} failed: {e}")
 
             finally:
                 # Cleanup temporary chunk files
