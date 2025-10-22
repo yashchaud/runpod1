@@ -4,7 +4,7 @@ Manages video processing jobs with queue system
 """
 
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException, Form
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 import uvicorn
@@ -17,6 +17,7 @@ import time
 from datetime import datetime
 import uuid
 from enum import Enum
+from queue import Queue
 
 from adaptive_processor import AdaptiveVideoProcessor
 
@@ -63,6 +64,9 @@ class Job(BaseModel):
 
 # Job storage
 jobs: Dict[str, Job] = {}
+
+# Progress streams for SSE
+progress_queues: Dict[str, Queue] = {}
 
 # Global processor (initialized on startup)
 processor: Optional[AdaptiveVideoProcessor] = None
@@ -192,11 +196,27 @@ async def process_job(job_id: str, video_path: str, mode: str):
     """Background task to process video"""
     job = jobs[job_id]
 
+    # Create progress queue for this job
+    progress_queue = Queue()
+    progress_queues[job_id] = progress_queue
+
+    def progress_callback(update: Dict[str, Any]):
+        """Callback to send progress updates"""
+        progress_queue.put(update)
+        job.progress = update.get('progress', 0.0)
+        save_job(job)
+
     try:
         # Update status
         job.status = JobStatus.PROCESSING
         job.started_at = datetime.now().isoformat()
         save_job(job)
+
+        progress_callback({
+            'status': 'processing',
+            'progress': 0.0,
+            'message': 'Starting video processing...'
+        })
 
         logger.info(f"Starting job {job_id}")
 
@@ -207,14 +227,20 @@ async def process_job(job_id: str, video_path: str, mode: str):
         processor.mode = mode
         processor.prompt = processor.PROMPTS.get(mode, processor.PROMPTS["screen_share"])
 
-        # Process
-        result = processor.process_video(video_path, str(result_path))
+        # Process with progress callback
+        result = processor.process_video(video_path, str(result_path), progress_callback=progress_callback)
 
         # Update job
         job.status = JobStatus.COMPLETED
         job.completed_at = datetime.now().isoformat()
         job.result_path = str(result_path)
         job.progress = 100.0
+
+        progress_callback({
+            'status': 'completed',
+            'progress': 100.0,
+            'message': 'Processing completed successfully!'
+        })
 
         logger.info(f"Job {job_id} completed successfully")
 
@@ -224,8 +250,16 @@ async def process_job(job_id: str, video_path: str, mode: str):
         job.completed_at = datetime.now().isoformat()
         job.error = str(e)
 
+        progress_callback({
+            'status': 'failed',
+            'progress': job.progress,
+            'message': f'Processing failed: {str(e)}'
+        })
+
     finally:
         save_job(job)
+        # Signal end of stream
+        progress_queue.put(None)
 
 def save_job(job: Job):
     """Save job metadata to disk"""
@@ -248,6 +282,75 @@ async def get_job_status(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
 
     return jobs[job_id]
+
+@app.get("/jobs/{job_id}/stream")
+async def stream_job_progress(job_id: str):
+    """
+    Stream job progress using Server-Sent Events (SSE)
+
+    This endpoint provides real-time progress updates for a job.
+    The client can connect to this endpoint immediately after submitting
+    a job to receive live updates about processing status.
+    """
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    async def event_generator():
+        """Generate SSE events from progress queue"""
+        # Wait for progress queue to be created
+        timeout = 10
+        start_time = time.time()
+        while job_id not in progress_queues:
+            if time.time() - start_time > timeout:
+                yield f"data: {json.dumps({'error': 'Processing not started'})}\n\n"
+                return
+            await asyncio.sleep(0.1)
+
+        queue = progress_queues[job_id]
+
+        # Send initial status
+        job = jobs[job_id]
+        yield f"data: {json.dumps({'status': job.status, 'progress': job.progress})}\n\n"
+
+        # Stream progress updates
+        while True:
+            try:
+                # Non-blocking queue check
+                if not queue.empty():
+                    update = queue.get_nowait()
+
+                    # None signals end of stream
+                    if update is None:
+                        break
+
+                    # Send update
+                    yield f"data: {json.dumps(update)}\n\n"
+                else:
+                    # Send heartbeat to keep connection alive
+                    await asyncio.sleep(1)
+                    yield f": heartbeat\n\n"
+
+            except Exception as e:
+                logger.error(f"Error in event generator: {e}")
+                break
+
+        # Send final status
+        final_job = jobs[job_id]
+        yield f"data: {json.dumps({'status': final_job.status, 'progress': final_job.progress, 'completed': True})}\n\n"
+
+        # Cleanup
+        if job_id in progress_queues:
+            del progress_queues[job_id]
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable proxy buffering
+        }
+    )
 
 @app.get("/results/{job_id}")
 async def get_result(job_id: str):

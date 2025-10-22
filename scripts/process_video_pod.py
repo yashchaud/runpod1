@@ -60,7 +60,8 @@ class PodClient:
             response = self.session.post(
                 f"{self.base_url}/process",
                 files=files,
-                data=data
+                data=data,
+                timeout=300  # 5 minutes timeout for upload + queueing
             )
 
         response.raise_for_status()
@@ -96,9 +97,76 @@ class PodClient:
 
         return result
 
-    def wait_for_completion(self, job_id: str, poll_interval: int = 10) -> dict:
+    def stream_progress(self, job_id: str) -> dict:
         """
-        Wait for job to complete
+        Stream real-time progress updates using SSE
+
+        Args:
+            job_id: Job ID
+
+        Returns:
+            Final job status
+        """
+        print(f"\nStreaming progress for job {job_id}...")
+        print("(Press Ctrl+C to stop streaming - job will continue processing)\n")
+
+        start_time = time.time()
+
+        try:
+            response = self.session.get(
+                f"{self.base_url}/jobs/{job_id}/stream",
+                stream=True,
+                headers={"Accept": "text/event-stream"},
+                timeout=None  # No timeout for streaming
+            )
+            response.raise_for_status()
+
+            # Process SSE stream
+            for line in response.iter_lines():
+                if not line:
+                    continue
+
+                line = line.decode('utf-8')
+
+                # Skip heartbeat
+                if line.startswith(':'):
+                    continue
+
+                # Parse SSE data
+                if line.startswith('data: '):
+                    data_json = line[6:]  # Remove 'data: ' prefix
+                    try:
+                        data = json.loads(data_json)
+
+                        # Display progress
+                        if 'message' in data:
+                            elapsed = time.time() - start_time
+                            progress = data.get('progress', 0)
+                            print(f"[{elapsed:.1f}s] {progress:.1f}% - {data['message']}")
+
+                        # Check if completed
+                        if data.get('completed'):
+                            elapsed = time.time() - start_time
+                            status = data.get('status', 'unknown')
+                            print(f"\nJob {status} in {elapsed:.1f} seconds ({elapsed/60:.1f} minutes)")
+                            return self.get_job_status(job_id)
+
+                    except json.JSONDecodeError:
+                        continue
+
+        except KeyboardInterrupt:
+            print("\n\nStopped streaming (job continues processing)")
+            print(f"Check status later with: job_id={job_id}")
+            return self.get_job_status(job_id)
+
+        except Exception as e:
+            print(f"\nStreaming error: {e}")
+            print("Falling back to polling...")
+            return self.wait_for_completion_polling(job_id)
+
+    def wait_for_completion_polling(self, job_id: str, poll_interval: int = 10) -> dict:
+        """
+        Wait for job to complete using polling (fallback method)
 
         Args:
             job_id: Job ID
@@ -107,7 +175,7 @@ class PodClient:
         Returns:
             Final job status
         """
-        print(f"\nWaiting for job {job_id} to complete...")
+        print(f"\nPolling for job {job_id} status...")
         print("(Press Ctrl+C to stop polling - job will continue processing)\n")
 
         start_time = time.time()
@@ -121,7 +189,8 @@ class PodClient:
                 # Print status updates
                 if current_status != last_status:
                     elapsed = time.time() - start_time
-                    print(f"[{elapsed/60:.1f}m] Status: {current_status}")
+                    progress = status.get('progress', 0)
+                    print(f"[{elapsed/60:.1f}m] Status: {current_status} ({progress:.1f}%)")
 
                     if current_status == "processing":
                         if status.get('started_at'):
@@ -147,12 +216,35 @@ class PodClient:
             print(f"Check status later with: job_id={job_id}")
             return self.get_job_status(job_id)
 
+    def wait_for_completion(self, job_id: str, poll_interval: int = 10, use_streaming: bool = True) -> dict:
+        """
+        Wait for job to complete
+
+        Args:
+            job_id: Job ID
+            poll_interval: Seconds between status checks (for polling mode)
+            use_streaming: Use SSE streaming for real-time updates (default: True)
+
+        Returns:
+            Final job status
+        """
+        if use_streaming:
+            try:
+                return self.stream_progress(job_id)
+            except Exception as e:
+                print(f"Streaming not available: {e}")
+                print("Falling back to polling mode...")
+                return self.wait_for_completion_polling(job_id, poll_interval)
+        else:
+            return self.wait_for_completion_polling(job_id, poll_interval)
+
     def process_and_wait(
         self,
         video_path: str,
         mode: str = "screen_share",
         output_path: Optional[str] = None,
-        poll_interval: int = 10
+        poll_interval: int = 10,
+        use_streaming: bool = True
     ) -> dict:
         """
         Submit video and wait for completion
@@ -195,7 +287,7 @@ class PodClient:
         print(f"{'='*60}")
 
         # Wait for completion
-        final_status = self.wait_for_completion(job_id, poll_interval)
+        final_status = self.wait_for_completion(job_id, poll_interval, use_streaming)
 
         # Get result if completed
         if final_status['status'] == 'completed':
@@ -235,6 +327,7 @@ def main():
     parser.add_argument("--output", help="Output JSON path")
     parser.add_argument("--poll-interval", type=int, default=10, help="Status check interval (seconds)")
     parser.add_argument("--no-wait", action="store_true", help="Submit and return immediately")
+    parser.add_argument("--no-streaming", action="store_true", help="Use polling instead of streaming for progress updates")
 
     args = parser.parse_args()
 
@@ -252,7 +345,8 @@ def main():
                 args.video_path,
                 mode=args.mode,
                 output_path=args.output,
-                poll_interval=args.poll_interval
+                poll_interval=args.poll_interval,
+                use_streaming=not args.no_streaming
             )
 
     except requests.exceptions.RequestException as e:

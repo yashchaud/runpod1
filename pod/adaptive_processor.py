@@ -231,13 +231,106 @@ Identify:
 
         return results
 
-    def process_video(self, video_path: str, output_path: str = None) -> Dict[str, Any]:
+    def analyze_video_direct(self, video_path: str, progress_callback=None) -> Dict[str, Any]:
+        """
+        Analyze video directly using Qwen3-VL's native video support
+
+        Args:
+            video_path: Path to video file
+            progress_callback: Optional callback function for progress updates
+
+        Returns:
+            Video analysis result
+        """
+        logger.info(f"Analyzing video directly with Qwen3-VL...")
+
+        if progress_callback:
+            progress_callback({
+                'progress': 10.0,
+                'message': 'Preparing video for analysis...'
+            })
+
+        # Prepare video message using Qwen3-VL video support
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "video", "video": video_path},
+                    {"type": "text", "text": self.prompt}
+                ]
+            }
+        ]
+
+        if progress_callback:
+            progress_callback({
+                'progress': 30.0,
+                'message': 'Processing video with Qwen3-VL...'
+            })
+
+        # Process video
+        inputs = self.processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt"
+        )
+        inputs = inputs.to(self.model.device)
+
+        if progress_callback:
+            progress_callback({
+                'progress': 50.0,
+                'message': 'Generating analysis...'
+            })
+
+        # Generate
+        with torch.no_grad():
+            generated_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=2048,  # More tokens for full video analysis
+                do_sample=False,
+                temperature=0.7
+            )
+
+        if progress_callback:
+            progress_callback({
+                'progress': 80.0,
+                'message': 'Decoding results...'
+            })
+
+        # Decode
+        generated_ids_trimmed = [
+            out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+        ]
+        output_text = self.processor.batch_decode(
+            generated_ids_trimmed,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False
+        )[0]
+
+        # Parse JSON if possible
+        try:
+            analysis = json.loads(output_text)
+        except json.JSONDecodeError:
+            analysis = {"analysis": output_text}
+
+        if progress_callback:
+            progress_callback({
+                'progress': 90.0,
+                'message': 'Finalizing results...'
+            })
+
+        logger.info(f"Video analysis complete!")
+        return analysis
+
+    def process_video(self, video_path: str, output_path: str = None, progress_callback=None) -> Dict[str, Any]:
         """
         Process entire video with parallel batch processing
 
         Args:
             video_path: Path to video file
             output_path: Path to save results JSON
+            progress_callback: Optional callback function for progress updates
 
         Returns:
             Complete analysis results
@@ -246,8 +339,13 @@ Identify:
         if not video_path.exists():
             raise FileNotFoundError(f"Video not found: {video_path}")
 
-        # Update config for this video
-        self.update_config_for_video(str(video_path))
+        start_time = time.time()
+
+        if progress_callback:
+            progress_callback({
+                'progress': 5.0,
+                'message': 'Loading video information...'
+            })
 
         # Get video info
         video_info = self.sampler.get_video_info(str(video_path))
@@ -256,6 +354,79 @@ Identify:
         logger.info(f"  Duration: {video_info['duration_minutes']:.1f} minutes")
         logger.info(f"  Resolution: {video_info['width']}x{video_info['height']}")
         logger.info(f"  Total Frames: {video_info['total_frames']:,}")
+
+        # Use direct video analysis (more efficient!)
+        logger.info("\nUsing direct video analysis (native Qwen3-VL video support)")
+
+        try:
+            analysis_result = self.analyze_video_direct(str(video_path), progress_callback)
+        except Exception as e:
+            logger.warning(f"Direct video analysis failed: {e}. Falling back to frame-by-frame analysis.")
+
+            if progress_callback:
+                progress_callback({
+                    'progress': 10.0,
+                    'message': 'Falling back to frame-by-frame analysis...'
+                })
+
+            # Fallback to frame-by-frame
+            return self._process_video_frames(video_path, output_path, progress_callback, video_info, start_time)
+
+        total_time = time.time() - start_time
+
+        # Create final output
+        output = {
+            'video_info': video_info,
+            'processing_config': {
+                'method': 'direct_video_analysis',
+                'precision': self.config.precision,
+                'mode': self.mode
+            },
+            'processing_stats': {
+                'processing_time_seconds': total_time,
+                'processing_time_minutes': total_time / 60,
+                'efficiency_ratio': total_time / video_info['duration_seconds']
+            },
+            'analysis': analysis_result
+        }
+
+        logger.info(f"\nProcessing Complete!")
+        logger.info(f"  Time: {total_time/60:.1f} minutes")
+        logger.info(f"  Efficiency: {total_time/video_info['duration_seconds']*100:.1f}% of video length")
+
+        # Save results
+        if output_path is None:
+            output_path = video_path.parent / f"{video_path.stem}_analysis.json"
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(output, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"Results saved to: {output_path}")
+
+        if progress_callback:
+            progress_callback({
+                'progress': 100.0,
+                'message': 'Processing complete!'
+            })
+
+        return output
+
+    def _process_video_frames(self, video_path: Path, output_path: str, progress_callback, video_info: Dict, start_time: float) -> Dict[str, Any]:
+        """
+        Fallback method: Process video by extracting and analyzing frames
+
+        Args:
+            video_path: Path to video file
+            output_path: Path to save results JSON
+            progress_callback: Optional callback function for progress updates
+            video_info: Video metadata
+            start_time: Processing start time
+
+        Returns:
+            Complete analysis results
+        """
+        # Update config for this video
+        self.update_config_for_video(str(video_path))
 
         # Estimate processing time
         estimated_sampled_frames = video_info['total_frames'] // self.config.frame_sample_rate
@@ -270,7 +441,6 @@ Identify:
 
         # Process in parallel batches
         all_results = []
-        start_time = time.time()
 
         with ThreadPoolExecutor(max_workers=self.config.max_concurrent_batches) as executor:
             futures = []
@@ -291,6 +461,14 @@ Identify:
                     progress = len(all_results) / estimated_sampled_frames * 100
                     logger.info(f"Progress: {progress:.1f}% ({len(all_results)}/{estimated_sampled_frames} frames, {elapsed/60:.1f}m elapsed)")
 
+                    if progress_callback:
+                        progress_callback({
+                            'progress': min(95.0, progress),  # Cap at 95% until fully done
+                            'message': f'Analyzed {len(all_results)}/{estimated_sampled_frames} frames',
+                            'frames_processed': len(all_results),
+                            'total_frames': estimated_sampled_frames
+                        })
+
                 except Exception as e:
                     logger.error(f"Batch processing failed: {e}")
 
@@ -303,6 +481,7 @@ Identify:
         output = {
             'video_info': video_info,
             'processing_config': {
+                'method': 'frame_by_frame',
                 'batch_size': self.config.batch_size,
                 'concurrent_batches': self.config.max_concurrent_batches,
                 'frame_sample_rate': self.config.frame_sample_rate,
