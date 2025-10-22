@@ -156,6 +156,29 @@ class PodClient:
                             progress = data.get('progress', 0)
                             print(f"[{elapsed:.1f}s] {progress:.1f}% - {data['message']}")
 
+                        # Display chunk result if available (INCREMENTAL STREAMING!)
+                        if 'chunk_result' in data:
+                            chunk_result = data['chunk_result']
+                            print(f"\n{'='*60}")
+                            print(f"CHUNK {chunk_result['chunk_id']+1} RESULT ({chunk_result['start_time']:.1f}s - {chunk_result['end_time']:.1f}s):")
+                            print(f"{'='*60}")
+
+                            # Display analysis (first 500 chars)
+                            analysis = chunk_result.get('analysis', {})
+                            if isinstance(analysis, dict):
+                                for key, value in analysis.items():
+                                    value_str = str(value)[:500]
+                                    print(f"{key}: {value_str}")
+                                    if len(str(value)) > 500:
+                                        print("  ... (truncated)")
+                            else:
+                                analysis_str = str(analysis)[:500]
+                                print(analysis_str)
+                                if len(str(analysis)) > 500:
+                                    print("... (truncated)")
+
+                            print(f"{'='*60}\n")
+
                         # Check if completed
                         if data.get('completed'):
                             elapsed = time.time() - start_time
