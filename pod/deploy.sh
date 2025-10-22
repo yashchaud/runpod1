@@ -15,6 +15,22 @@ echo -e "${GREEN}================================${NC}"
 echo -e "${GREEN}Video Processing Pod Deployment${NC}"
 echo -e "${GREEN}================================${NC}\n"
 
+echo -e "${YELLOW}💡 Tip: GitHub Actions builds are faster and don't require local disk space!${NC}"
+echo -e "${YELLOW}   Just push your code and let GitHub build automatically.${NC}"
+echo -e "${YELLOW}   See DOCKER_BUILD_TIPS.md for details.${NC}\n"
+
+echo -e "${YELLOW}Do you want to build locally? (y/N):${NC}"
+read -r CONFIRM
+if [[ ! $CONFIRM =~ ^[Yy]$ ]]; then
+    echo -e "\n${GREEN}Recommended: Push to GitHub and let Actions build${NC}"
+    echo -e "1. git add pod/"
+    echo -e "2. git commit -m \"Update pod\""
+    echo -e "3. git push origin main"
+    echo -e "4. Check Actions tab on GitHub"
+    echo -e "\n"
+    exit 0
+fi
+
 # Get Docker username
 if [ -z "$1" ]; then
     echo -e "${YELLOW}Enter your Docker Hub username:${NC}"
@@ -33,7 +49,16 @@ echo -e "Image: ${FULL_IMAGE}\n"
 docker build -t ${IMAGE_NAME}:${TAG} .
 
 if [ $? -ne 0 ]; then
-    echo -e "${RED}Build failed!${NC}"
+    echo -e "\n${RED}Build failed!${NC}"
+    echo -e "\n${YELLOW}Common issues:${NC}"
+    echo -e "1. ${YELLOW}No space left on device${NC}"
+    echo -e "   Fix: docker system prune -a -f"
+    echo -e "   Or use GitHub Actions (recommended)"
+    echo -e "\n2. ${YELLOW}Docker not running${NC}"
+    echo -e "   Fix: Start Docker Desktop"
+    echo -e "\n3. ${YELLOW}Network issues${NC}"
+    echo -e "   Fix: Check internet connection"
+    echo -e "\n${YELLOW}See DOCKER_BUILD_TIPS.md for detailed solutions${NC}\n"
     exit 1
 fi
 

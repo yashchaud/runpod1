@@ -18,30 +18,35 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /workspace
 
-# Install Python packages
+# Install PyTorch first (largest package) - split to reduce build space
+RUN pip3 install --no-cache-dir torch==2.4.0 && \
+    rm -rf /root/.cache/pip && \
+    pip3 install --no-cache-dir torchvision && \
+    rm -rf /root/.cache/pip
+
+# Install transformers and ML packages
+RUN pip3 install --no-cache-dir transformers>=4.45.0 accelerate && \
+    rm -rf /root/.cache/pip && \
+    pip3 install --no-cache-dir qwen-vl-utils einops && \
+    rm -rf /root/.cache/pip
+
+# Install API and processing packages
 RUN pip3 install --no-cache-dir \
-    torch==2.4.0 \
-    torchvision \
-    transformers>=4.45.0 \
-    accelerate \
-    qwen-vl-utils \
     fastapi \
     uvicorn[standard] \
     python-multipart \
     opencv-python-headless \
     av \
     pillow \
-    einops \
     pynvml \
     redis \
     aiofiles \
-    tqdm
+    tqdm && \
+    rm -rf /root/.cache/pip
 
-# Pre-download Qwen3-VL-8B-Instruct (October 15, 2025)
-RUN python3 -c "from transformers import Qwen2VLForConditionalGeneration, AutoProcessor; \
-    Qwen2VLForConditionalGeneration.from_pretrained('Qwen/Qwen3-VL-8B-Instruct', \
-    device_map='auto', trust_remote_code=True, torch_dtype='bfloat16', cache_dir='/models'); \
-    AutoProcessor.from_pretrained('Qwen/Qwen3-VL-8B-Instruct', trust_remote_code=True, cache_dir='/models')"
+# Note: Model will be downloaded on first run to save Docker build space
+# This reduces image build from ~30GB to ~10GB
+# Model download happens automatically on pod startup
 
 # Copy application files
 COPY adaptive_processor.py .
