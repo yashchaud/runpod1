@@ -175,6 +175,10 @@ async def process_video(
     )
     jobs[job_id] = job
 
+    # Create progress queue IMMEDIATELY so SSE endpoint can connect
+    progress_queue = Queue()
+    progress_queues[job_id] = progress_queue
+
     # Save job metadata
     job_file = JOBS_DIR / f"{job_id}.json"
     with open(job_file, 'w') as f:
@@ -186,10 +190,6 @@ async def process_video(
         """Background task to upload and process video"""
         video_path = UPLOAD_DIR / f"{job_id}_{video.filename}"
 
-        # Create progress queue early for upload status
-        progress_queue = Queue()
-        progress_queues[job_id] = progress_queue
-
         try:
             # Notify about upload starting
             progress_queue.put({
@@ -198,10 +198,31 @@ async def process_video(
                 'message': 'Uploading video to server...'
             })
 
-            # Save uploaded file
+            # Save uploaded file with progress updates
+            import asyncio as aio_module
             async with aiofiles.open(video_path, 'wb') as f:
                 content = await video.read()
-                await f.write(content)
+
+                # Send progress update every few seconds during write
+                chunk_size = 1024 * 1024  # 1MB chunks
+                total_size = len(content)
+                written = 0
+
+                while written < total_size:
+                    chunk_end = min(written + chunk_size, total_size)
+                    await f.write(content[written:chunk_end])
+                    written = chunk_end
+
+                    # Update progress
+                    upload_progress = (written / total_size) * 5.0  # 0-5%
+                    progress_queue.put({
+                        'status': 'uploading',
+                        'progress': upload_progress,
+                        'message': f'Uploading video... {written/(1024*1024):.1f}MB / {total_size/(1024*1024):.1f}MB'
+                    })
+
+                    # Small delay to prevent flooding
+                    await aio_module.sleep(0.1)
 
             logger.info(f"Video uploaded for job {job_id}: {video.filename}")
 
@@ -384,8 +405,8 @@ async def stream_job_progress(job_id: str):
                     # Send update
                     yield f"data: {json.dumps(update)}\n\n"
                 else:
-                    # Send heartbeat to keep connection alive
-                    await asyncio.sleep(1)
+                    # Send heartbeat to keep connection alive (every 0.5s for RunPod proxy)
+                    await asyncio.sleep(0.5)
                     yield f": heartbeat\n\n"
 
             except Exception as e:
