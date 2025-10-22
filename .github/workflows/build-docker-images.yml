@@ -5,6 +5,7 @@ on:
     branches:
       - main
     paths:
+      - 'pod/**'
       - 'endpoints/**'
       - 'services/**'
       - '.github/workflows/build-docker-images.yml'
@@ -12,17 +13,19 @@ on:
     branches:
       - main
     paths:
+      - 'pod/**'
       - 'endpoints/**'
       - 'services/**'
   workflow_dispatch:
     inputs:
       image:
-        description: 'Specific image to build (yolo, whisper, all)'
+        description: 'Specific image to build (pod, yolo, whisper, all)'
         required: false
         default: 'all'
         type: choice
         options:
           - all
+          - pod
           - yolo
           - whisper
 
@@ -35,6 +38,7 @@ jobs:
     name: Detect Changed Images
     runs-on: ubuntu-latest
     outputs:
+      pod: ${{ steps.filter.outputs.pod }}
       yolo: ${{ steps.filter.outputs.yolo }}
       whisper: ${{ steps.filter.outputs.whisper }}
       manual-trigger: ${{ github.event_name == 'workflow_dispatch' }}
@@ -50,10 +54,68 @@ jobs:
         id: filter
         with:
           filters: |
+            pod:
+              - 'pod/**'
             yolo:
               - 'endpoints/yolo/**'
             whisper:
               - 'endpoints/whisper/**'
+
+  build-pod:
+    name: Build Video Processing Pod (Qwen3-VL-8B)
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: |
+      (needs.detect-changes.outputs.pod == 'true' && github.event_name != 'workflow_dispatch') ||
+      (needs.detect-changes.outputs.manual-trigger == 'true' && (needs.detect-changes.outputs.selected-image == 'all' || needs.detect-changes.outputs.selected-image == 'pod'))
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/video-processor
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=Video Processing Pod
+            org.opencontainers.image.description=Adaptive video processing with Qwen3-VL-8B-Instruct
+            org.opencontainers.image.vendor=RunPod
+
+      - name: Build and push Pod image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./pod
+          file: ./pod/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Image digest
+        run: |
+          echo "## Video Processing Pod Built! 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image**: \`${{ secrets.DOCKERHUB_USERNAME }}/video-processor:latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Model**: Qwen3-VL-8B-Instruct (October 2025)" >> $GITHUB_STEP_SUMMARY
+          echo "**Tags**: ${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
 
   build-yolo:
     name: Build YOLO Endpoint
@@ -150,14 +212,19 @@ jobs:
   summary:
     name: Build Summary
     runs-on: ubuntu-latest
-    needs: [build-yolo, build-whisper]
+    needs: [build-pod, build-yolo, build-whisper]
     if: always()
     steps:
       - name: Summary
         run: |
           echo "## Docker Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Image | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| YOLO | ${{ needs.build-yolo.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Whisper | ${{ needs.build-whisper.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | Status | Description |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|-------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Pod** (Recommended) | ${{ needs.build-pod.result }} | Qwen3-VL-8B for screen content analysis |" >> $GITHUB_STEP_SUMMARY
+          echo "| YOLO | ${{ needs.build-yolo.result }} | Object detection (legacy - not for screens) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Whisper | ${{ needs.build-whisper.result }} | Audio transcription |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 💡 Recommendation" >> $GITHUB_STEP_SUMMARY
+          echo "Use **Pod** for Google Meet recordings and screen shares." >> $GITHUB_STEP_SUMMARY
+          echo "See [POD_VS_SERVERLESS.md](POD_VS_SERVERLESS.md) for comparison." >> $GITHUB_STEP_SUMMARY
