@@ -104,7 +104,7 @@ class ParallelVideoProcessor:
     """Process video files using RunPod endpoints with parallel workers"""
 
     def __init__(self, yolo_endpoint_id: str, whisper_endpoint_id: str, api_key: str,
-                 max_workers: int = 5, batch_size: int = 16):
+                 max_workers: int = 7, batch_size: int = 16):
         self.client = RunPodClient(api_key)
         self.yolo_endpoint = yolo_endpoint_id
         self.whisper_endpoint = whisper_endpoint_id
@@ -418,14 +418,14 @@ def main():
         print("  python process_video_parallel.py video.mp4 1 3 12 results/")
         print("\nDefaults:")
         print("  fps: 1")
-        print("  max_workers: 5 (concurrent requests)")
-        print("  batch_size: 16 (frames per batch)")
+        print("  max_workers: 7 (concurrent requests, optimized for 3 RunPod workers)")
+        print("  batch_size: 16 (frames per batch, optimized for 24GB VRAM)")
         print("  output_dir: output/")
         sys.exit(1)
 
     video_path = sys.argv[1]
     fps = int(sys.argv[2]) if len(sys.argv) > 2 else 1
-    max_workers = int(sys.argv[3]) if len(sys.argv) > 3 else 5
+    max_workers = int(sys.argv[3]) if len(sys.argv) > 3 else 7  # Optimized for 3 YOLO workers
     batch_size = int(sys.argv[4]) if len(sys.argv) > 4 else 16
     output_dir = sys.argv[5] if len(sys.argv) > 5 else 'output'
 
