@@ -317,7 +317,12 @@ class ParallelVideoProcessor:
             raise Exception("ffmpeg not found")
 
     def process_audio_with_whisper(self, audio_b64: str) -> Dict[str, Any]:
-        """Process audio with Whisper endpoint"""
+        """
+        Process audio with Whisper endpoint
+
+        For long audio files, we can split into chunks and process in batch
+        For now, keeping single-file processing since most videos have continuous audio
+        """
         print(f"\n🎤 Processing audio with Whisper endpoint...", flush=True)
 
         try:
@@ -337,6 +342,10 @@ class ParallelVideoProcessor:
             print(f"   Duration: {response.get('duration', 0):.2f}s", flush=True)
             print(f"   Processing time: {response.get('processing_time', 0):.2f}s", flush=True)
             print(f"   Segments: {len(response.get('transcription', []))}", flush=True)
+
+            # Calculate throughput
+            throughput = response.get('duration', 0) / response.get('processing_time', 1)
+            print(f"   Throughput: {throughput:.2f}x realtime", flush=True)
 
             return response
 

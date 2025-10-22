@@ -123,26 +123,64 @@ The parallel version uses **enhanced detection settings** for maximum detail:
 - **Higher Resolution (1280px)**: Better detection of small objects
 - **FP16**: Faster processing with minimal accuracy loss
 
+## Whisper Optimization Settings
+
+The Whisper handler now includes **batch support and optimizations**:
+
+```python
+{
+    'beam_size': 5,                        # Higher beam search for accuracy
+    'vad_filter': True,                    # Voice activity detection
+    'num_workers': 4,                      # Parallel preprocessing
+    'condition_on_previous_text': False,   # Faster for batch processing
+    'compression_ratio_threshold': 2.4,
+    'log_prob_threshold': -1.0,
+    'no_speech_threshold': 0.6
+}
+```
+
+### What This Means:
+
+- **Beam Size 5**: More thorough decoding (higher accuracy)
+- **VAD Filter**: Skip silent parts (faster processing)
+- **Parallel Workers**: 4 preprocessing threads
+- **Batch Support**: Process multiple audio chunks if needed
+- **Optimized Thresholds**: Better quality filtering
+
 ## Redeploy Updated Handlers
 
-Your YOLO handler now supports batch processing! To use it:
+Both YOLO and Whisper handlers now support batch processing! To use them:
 
-### Option 1: Rebuild & Push Docker Image (Recommended)
+### Option 1: Rebuild & Push Docker Images (Recommended)
 
 ```bash
-# Trigger GitHub Actions to rebuild
-git add endpoints/yolo/handler.py
-git commit -m "Enable batch processing for YOLO"
+# Trigger GitHub Actions to rebuild both
+git add endpoints/yolo/handler.py endpoints/whisper/handler.py
+git commit -m "Enable batch processing for YOLO and Whisper with max detail"
 git push
 
 # Or manually trigger via GitHub Actions UI
 ```
 
-Then redeploy the endpoint in RunPod dashboard with the new image.
+Then redeploy **both endpoints** in RunPod dashboard with the new images.
 
-### Option 2: Update Handler Directly (Quick Test)
+### Option 2: Update Handlers Directly (Quick Test)
 
-If RunPod allows, you can upload just the handler.py file to your endpoint without rebuilding the entire Docker image.
+If RunPod allows, you can upload just the handler.py files to your endpoints without rebuilding the entire Docker images.
+
+### What Changed:
+
+**YOLO Handler:**
+- ✅ Batch support (process 16 frames at once)
+- ✅ Lower confidence (0.15 vs 0.25)
+- ✅ Higher resolution (1280px vs 640px)
+- ✅ FP16 optimization
+
+**Whisper Handler:**
+- ✅ Batch support (process multiple audio chunks)
+- ✅ Parallel preprocessing (4 workers)
+- ✅ Optimized thresholds
+- ✅ Better throughput reporting
 
 ## Testing
 
