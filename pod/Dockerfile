@@ -1,16 +1,11 @@
-FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
+# Use RunPod's PyTorch base image (PyTorch already installed!)
+FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
-ENV CUDA_HOME=/usr/local/cuda
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    python3.10 \
-    python3-pip \
-    python3-dev \
-    git \
-    wget \
     ffmpeg \
     libsm6 \
     libxext6 \
@@ -18,16 +13,12 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /workspace
 
-# Install PyTorch first (largest package) - split to reduce build space
-RUN pip3 install --no-cache-dir torch==2.4.0 && \
-    rm -rf /root/.cache/pip && \
-    pip3 install --no-cache-dir torchvision && \
-    rm -rf /root/.cache/pip
-
-# Install transformers and ML packages
-RUN pip3 install --no-cache-dir transformers>=4.45.0 accelerate && \
-    rm -rf /root/.cache/pip && \
-    pip3 install --no-cache-dir qwen-vl-utils einops && \
+# Install transformers and ML packages (PyTorch already in base image!)
+RUN pip3 install --no-cache-dir \
+    transformers>=4.45.0 \
+    accelerate \
+    qwen-vl-utils \
+    einops && \
     rm -rf /root/.cache/pip
 
 # Install API and processing packages
@@ -43,10 +34,6 @@ RUN pip3 install --no-cache-dir \
     aiofiles \
     tqdm && \
     rm -rf /root/.cache/pip
-
-# Note: Model will be downloaded on first run to save Docker build space
-# This reduces image build from ~30GB to ~10GB
-# Model download happens automatically on pod startup
 
 # Copy application files
 COPY adaptive_processor.py .
