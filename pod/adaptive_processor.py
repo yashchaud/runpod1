@@ -18,7 +18,16 @@ import time
 
 from vram_detector import VRAMDetector, AdaptiveConfig
 from frame_sampler import FrameSampler, FrameInfo
-from video_chunker import VideoChunker, VideoChunk
+
+# Optional import for video chunking (backward compatible)
+try:
+    from video_chunker import VideoChunker, VideoChunk
+    CHUNKING_AVAILABLE = True
+except ImportError:
+    logger.warning("video_chunker not available. Chunking features disabled.")
+    CHUNKING_AVAILABLE = False
+    VideoChunker = None
+    VideoChunk = None
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -137,14 +146,20 @@ Identify:
             detect_scene_changes=True
         )
 
-        # Initialize video chunker
-        self.chunker = VideoChunker(
-            chunk_duration=self.chunk_duration,
-            overlap=2.0,
-            use_scene_detection=True,
-            min_chunk_duration=10.0,
-            max_chunk_duration=120.0
-        )
+        # Initialize video chunker (if available)
+        if CHUNKING_AVAILABLE and self.use_chunking:
+            self.chunker = VideoChunker(
+                chunk_duration=self.chunk_duration,
+                overlap=2.0,
+                use_scene_detection=True,
+                min_chunk_duration=10.0,
+                max_chunk_duration=120.0
+            )
+        else:
+            self.chunker = None
+            if self.use_chunking:
+                logger.warning("Chunking requested but video_chunker not available. Will use direct analysis only.")
+                self.use_chunking = False
 
         # Thread safety
         self.model_lock = Lock()
@@ -428,7 +443,12 @@ Identify:
         logger.info(f"  Total Frames: {video_info['total_frames']:,}")
 
         # Decide on processing strategy
-        use_chunking = self.use_chunking and duration_seconds > self.chunk_duration * 1.5
+        use_chunking = (
+            self.use_chunking and
+            CHUNKING_AVAILABLE and
+            self.chunker is not None and
+            duration_seconds > self.chunk_duration * 1.5
+        )
 
         if use_chunking:
             logger.info(f"\nUsing CHUNKED video analysis (chunks of ~{self.chunk_duration}s)")

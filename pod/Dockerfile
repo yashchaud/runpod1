@@ -39,6 +39,7 @@ COPY adaptive_processor.py .
 COPY server.py .
 COPY frame_sampler.py .
 COPY vram_detector.py .
+COPY video_chunker.py .
 
 # Create directories
 RUN mkdir -p /workspace/jobs /workspace/results /workspace/uploads

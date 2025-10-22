@@ -239,7 +239,8 @@ async def process_job(job_id: str, video_path: str, mode: str, chunk_duration: O
         # Update chunk duration if specified
         if chunk_duration is not None:
             processor.chunk_duration = chunk_duration
-            processor.chunker.chunk_duration = chunk_duration
+            if processor.chunker is not None:
+                processor.chunker.chunk_duration = chunk_duration
             logger.info(f"Using custom chunk duration: {chunk_duration}s")
 
         # Process with progress callback
@@ -418,14 +419,18 @@ async def get_config():
     if processor is None:
         raise HTTPException(status_code=503, detail="Processor not initialized")
 
+    chunking_info = {
+        "enabled": processor.use_chunking and processor.chunker is not None,
+        "chunk_duration": processor.chunk_duration,
+    }
+
+    if processor.chunker is not None:
+        chunking_info["overlap"] = processor.chunker.overlap
+        chunking_info["scene_detection"] = processor.chunker.use_scene_detection
+
     return {
         "mode": processor.mode,
-        "chunking": {
-            "enabled": processor.use_chunking,
-            "chunk_duration": processor.chunk_duration,
-            "overlap": processor.chunker.overlap,
-            "scene_detection": processor.chunker.use_scene_detection
-        },
+        "chunking": chunking_info,
         "config": {
             "batch_size": processor.config.batch_size,
             "max_concurrent_batches": processor.config.max_concurrent_batches,
