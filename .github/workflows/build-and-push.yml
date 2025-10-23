@@ -20,6 +20,14 @@ on:
         description: 'Docker image tag'
         required: false
         default: 'latest'
+      dockerfile:
+        description: 'Dockerfile to use (Dockerfile or Dockerfile.simple)'
+        required: false
+        default: 'Dockerfile.simple'
+        type: choice
+        options:
+          - Dockerfile.simple
+          - Dockerfile
 
 env:
   REGISTRY: docker.io
@@ -35,6 +43,19 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Free up disk space
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -a -f
+          sudo apt-get clean
+          echo "Disk space after cleanup:"
+          df -h
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -66,11 +87,21 @@ jobs:
             type=sha,prefix={{branch}}-
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Set Dockerfile
+        id: dockerfile
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "dockerfile=${{ github.event.inputs.dockerfile }}" >> $GITHUB_OUTPUT
+          else
+            echo "dockerfile=Dockerfile.simple" >> $GITHUB_OUTPUT
+          fi
+          echo "Using Dockerfile: $(cat $GITHUB_OUTPUT | grep dockerfile | cut -d'=' -f2)"
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./Dockerfile
+          file: ./${{ steps.dockerfile.outputs.dockerfile }}
           platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}

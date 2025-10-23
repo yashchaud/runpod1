@@ -1,0 +1,53 @@
+# Simplified Dockerfile using official vLLM Docker image
+# Smallest image size, fastest build time
+
+FROM vllm/vllm-openai:latest
+
+# Install additional dependencies for video processing
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install RunPod and video processing dependencies
+RUN pip install --no-cache-dir \
+    runpod>=1.7.0 \
+    ffmpeg-python>=0.2.0 \
+    opencv-python-headless>=4.10.0 \
+    && rm -rf /root/.cache/pip/*
+
+# Create app directory
+WORKDIR /app
+
+# Copy application code
+COPY src/ /app/src/
+COPY requirements.txt /app/
+
+# Set Python path
+ENV PYTHONPATH=/app/src:${PYTHONPATH}
+
+# Create directories for cache
+RUN mkdir -p /tmp/runpod /app/cache && \
+    chmod 777 /tmp/runpod /app/cache
+
+# Set HuggingFace cache directory
+ENV HF_HOME=/app/cache \
+    TRANSFORMERS_CACHE=/app/cache \
+    HF_DATASETS_CACHE=/app/cache
+
+# Environment variables for vLLM configuration
+ENV MODEL_NAME="Qwen/Qwen3-VL-8B-Instruct-FP8" \
+    MAX_MODEL_LEN="131072" \
+    GPU_MEMORY_UTILIZATION="0.90" \
+    TENSOR_PARALLEL_SIZE="1" \
+    MAX_FRAMES_PER_CHUNK="768" \
+    CHUNK_DURATION="60.0" \
+    CHUNK_OVERLAP="2.0" \
+    OMP_NUM_THREADS=1 \
+    VLLM_WORKER_MULTIPROC_METHOD=spawn
+
+# Set working directory
+WORKDIR /app/src
+
+# Run the handler
+CMD ["python", "-u", "handler.py"]

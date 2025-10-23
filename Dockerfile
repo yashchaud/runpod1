@@ -1,67 +1,55 @@
-# Multi-stage Dockerfile for Qwen3-VL with vLLM on RunPod
-# Optimized for CUDA 12.4 and efficient layer caching
+# Optimized Dockerfile for Qwen3-VL with vLLM on RunPod
+# Uses pre-built vLLM image to save space and build time
 
-# Base image with CUDA and Python
-FROM nvidia/cuda:12.4.0-devel-ubuntu22.04 AS base
+FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    CUDA_HOME=/usr/local/cuda \
-    PATH=/usr/local/cuda/bin:$PATH \
-    LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+    PYTHONDONTWRITEBYTECODE=1
 
-# Install system dependencies
+# Install system dependencies (FFmpeg for video processing)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 \
-    python3.11-dev \
-    python3-pip \
-    git \
-    wget \
-    curl \
     ffmpeg \
     libsm6 \
     libxext6 \
     libxrender-dev \
-    libgomp1 \
-    && ln -s /usr/bin/python3.11 /usr/bin/python \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /tmp/*
 
-# Upgrade pip
-RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel
+# Install Python packages in stages to manage disk space
+# Stage 1: Core dependencies
+RUN pip install --no-cache-dir \
+    vllm>=0.11.0 \
+    transformers>=4.47.0 \
+    && rm -rf /root/.cache/pip/* /tmp/*
 
-# Builder stage for Python dependencies
-FROM base AS builder
+# Stage 2: RunPod and video processing
+RUN pip install --no-cache-dir \
+    runpod>=1.7.0 \
+    ffmpeg-python>=0.2.0 \
+    opencv-python-headless>=4.10.0 \
+    && rm -rf /root/.cache/pip/* /tmp/*
 
-WORKDIR /build
-
-# Copy requirements first for better caching
-COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Install flash-attention for better performance (optional but recommended)
-RUN pip install --no-cache-dir flash-attn --no-build-isolation || echo "flash-attn installation failed, continuing without it"
-
-# Final runtime stage
-FROM base AS runtime
+# Stage 3: Utilities
+RUN pip install --no-cache-dir \
+    Pillow>=10.0.0 \
+    numpy>=1.24.0 \
+    requests>=2.31.0 \
+    aiohttp>=3.9.0 \
+    psutil>=5.9.0 \
+    && rm -rf /root/.cache/pip/* /tmp/*
 
 # Create app directory
 WORKDIR /app
-
-# Copy installed packages from builder
-COPY --from=builder /usr/local/lib/python3.11/dist-packages /usr/local/lib/python3.11/dist-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
 COPY src/ /app/src/
 COPY requirements.txt /app/
 
 # Set Python path
-ENV PYTHONPATH=/app/src:$PYTHONPATH
+ENV PYTHONPATH=/app/src:${PYTHONPATH}
 
 # Create directories for temporary files and cache
 RUN mkdir -p /tmp/runpod /app/cache && \
