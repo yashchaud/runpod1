@@ -1,0 +1,37 @@
+# Qwen3-VL vLLM Configuration
+# Override these with environment variables in RunPod
+
+model:
+  name: "Qwen/Qwen3-VL-8B-Instruct-FP8"
+  max_model_len: 131072  # 128K tokens
+  gpu_memory_utilization: 0.90
+  tensor_parallel_size: 1
+  trust_remote_code: true
+
+video_processing:
+  max_frames_per_chunk: 768  # Qwen3-VL limit
+  chunk_duration: 60.0  # seconds
+  chunk_overlap: 2.0  # seconds overlap for context
+
+generation:
+  default_max_tokens: 512
+  temperature: 0.7
+  top_p: 0.8
+  top_k: 20
+  presence_penalty: 1.5
+
+performance:
+  omp_num_threads: 1
+  enable_chunked_prefill: true
+  mm_processor_cache_type: "shm"  # shared memory for multi-GPU
+
+# RunPod specific
+runpod:
+  concurrency_modifier: 1
+  max_concurrency: 30
+  execution_timeout: 600  # 10 minutes
+
+# Logging
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

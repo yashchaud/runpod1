@@ -1,30 +1,20 @@
-# Core dependencies
-requests>=2.31.0
-runpod>=1.0.0
+# vLLM and core dependencies
+vllm>=0.11.0
+torch>=2.4.0
+transformers>=4.47.0
 
-# Computer Vision
-opencv-python>=4.8.0
-pillow>=10.0.0
-numpy>=1.24.0
+# RunPod dependencies
+runpod>=1.7.0
 
-# Data processing
-psycopg2-binary>=2.9.9
-redis>=5.0.0
-
-# Streaming
-livekit>=0.17.0
-
-# Audio processing
-librosa>=0.10.2
-soundfile>=0.12.1
-
-# Object tracking
-supervision>=0.22.0
-
-# API framework (for later phases)
-fastapi>=0.104.0
-uvicorn>=0.24.0
+# Video processing
+ffmpeg-python>=0.2.0
+opencv-python-headless>=4.10.0
 
 # Utilities
-python-dotenv>=1.0.0
-pydantic>=2.0.0
+Pillow>=10.0.0
+numpy>=1.24.0
+requests>=2.31.0
+aiohttp>=3.9.0
+
+# Monitoring and logging
+psutil>=5.9.0

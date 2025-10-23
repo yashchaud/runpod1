@@ -1,395 +1,382 @@
-# Video Processing with RunPod - Serverless & Pod Options
+# Qwen3-VL Video Processing with vLLM on RunPod
 
-Intelligent video processing system for Google Meet recordings, screen shares, and app demonstrations using Qwen3-VL-8B (October 2025).
+Production-ready serverless deployment of **Qwen3-VL-8B-Instruct** using **vLLM** on RunPod for processing long-form videos with zero-error rate and parallel chunk processing.
 
-## 🎯 Two Deployment Options
+## Features
 
-### Option 1: Pod (Recommended) ⭐
-Persistent GPU instance with adaptive scaling - **best for screen recordings and long videos**.
+- **Zero-Error Design**: Comprehensive validation, retry logic, and error handling
+- **Long Video Support**: Intelligent chunking respecting Qwen3-VL's 768-frame limit
+- **Parallel Processing**: Efficient batch processing of video chunks
+- **Optimized Performance**: FP8 quantization, vLLM optimizations, adaptive FPS
+- **Automated CI/CD**: GitHub Actions for Docker build and deployment
+- **Serverless Ready**: RunPod serverless worker with auto-scaling
 
-- ✅ **Latest Model**: Qwen3-VL-8B-Instruct (Oct 15, 2025) with 32-language OCR
-- ✅ **Auto-Scaling**: Adapts to 24GB / 48GB / 80GB VRAM automatically
-- ✅ **Fast**: 1-hour video in 15 minutes (24GB) or 6 minutes (80GB)
-- ✅ **Cost-Effective**: $0.06 per video (Spot pricing)
-- ✅ **Screen Understanding**: Reads UI text, detects elements, understands context
+## Architecture
 
-**Perfect for**: Google Meet recordings, app demos, screen shares, long videos (>10 min)
+```
+Video Input � Validation � Chunking � Frame Extraction � vLLM Inference � Aggregation � Results
+```
 
-[📖 Pod Documentation](pod/README.md) | [⚖️ Pod vs Serverless Comparison](POD_VS_SERVERLESS.md)
+### Key Components
 
-### Option 2: Serverless
-Auto-scaling functions for multiple models - **best for short clips and multi-model workflows**.
+1. **Video Processor** ([src/video_processor.py](src/video_processor.py))
+   - Intelligent video chunking with configurable duration
+   - Automatic chunk overlap for temporal context
+   - Adaptive chunk sizing based on video FPS
 
-- ⚠️ **YOLO Limitation**: Cannot analyze screen content (detects generic objects only)
-- ✅ **Multiple Models**: Can run YOLO + Whisper + other models independently
-- ✅ **No Management**: Auto-scales from 0 to N workers
-- ⚠️ **Slower**: 35 minutes for 1-hour video
-- ⚠️ **More Expensive**: ~10× cost vs Pod for long videos
+2. **Frame Extractor** ([src/frame_extractor.py](src/frame_extractor.py))
+   - FFmpeg-based frame extraction
+   - Automatic FPS calculation to stay within frame budget
+   - Support for keyframe-only extraction
 
-**Perfect for**: Short videos (<5 min), sporadic processing, multi-model workflows
+3. **vLLM Client** ([src/vllm_client.py](src/vllm_client.py))
+   - Qwen3-VL model inference with vLLM
+   - Parallel chunk processing with continuous batching
+   - Result aggregation and summarization
 
-[📖 Serverless Documentation](#serverless-documentation-legacy)
+4. **RunPod Handler** ([src/handler.py](src/handler.py))
+   - Serverless function handler
+   - Input validation and error handling
+   - Temporary file management
 
----
+## Requirements
 
-## 🚀 Quick Start: Deploy Pod (5 minutes)
+### GPU Requirements
 
-### Step 1: Build Docker Image
+| Model Variant | Minimum VRAM | Recommended GPU |
+|---------------|--------------|-----------------|
+| FP8 (Recommended) | ~16GB | RTX 4090, A5000, L40 |
+| BF16 | ~24GB | RTX 6000 Ada, A100 40GB |
+
+### Software Requirements
+
+- CUDA 12.4+
+- Python 3.11+
+- vLLM >= 0.11.0
+- FFmpeg
+
+## Quick Start
+
+### 1. Clone Repository
 
 ```bash
-cd pod
-chmod +x deploy.sh
-./deploy.sh your-docker-username
+git clone https://github.com/yourusername/qwen3-vl-runpod.git
+cd qwen3-vl-runpod
 ```
 
-### Step 2: Deploy to RunPod
+### 2. Set Up GitHub Secrets
 
-1. Go to [RunPod Pods](https://www.runpod.io/console/pods)
-2. Click "Deploy"
-3. Select **RTX 4090 Spot** (24GB, $0.25/hour)
-4. Container Settings:
-   - Docker Image: `your-docker-username/video-processor:latest`
-   - Expose HTTP Ports: `8000`
-   - Container Disk: `50GB`
-5. Deploy and copy your pod URL
+Required secrets for GitHub Actions:
 
-### Step 3: Process Your First Video
+- `DOCKERHUB_USERNAME`: Your Docker Hub username
+- `DOCKERHUB_TOKEN`: Docker Hub access token
+- `HF_TOKEN`: HuggingFace token (for gated models)
+
+Go to **Settings > Secrets and variables > Actions** and add these secrets.
+
+### 3. Build Docker Image
+
+The GitHub Actions workflow automatically builds and pushes on commits to `main`:
+
+```yaml
+# Triggered automatically on push to main
+# Or manually via Actions tab > Build and Push Docker Image > Run workflow
+```
+
+Manual build:
 
 ```bash
-# Install client dependencies
-pip install requests
-
-# Process video
-python scripts/process_video_pod.py \
-    "your-video.mp4" \
-    --pod-url "https://your-pod-id-8000.proxy.runpod.net" \
-    --mode screen_share \
-    --output results.json
+docker build -t yourusername/qwen3-vl-runpod:latest .
+docker push yourusername/qwen3-vl-runpod:latest
 ```
 
-**That's it!** Your video will be analyzed with:
-- Full screen content understanding
-- UI element detection with positions
-- Text extraction (OCR)
-- Scene descriptions and context
-- Activity and feature identification
+### 4. Deploy to RunPod
 
-[📖 Detailed Pod Documentation](pod/README.md)
+#### Option A: Using RunPod Console
 
----
+1. Go to [RunPod Serverless](https://runpod.io/console/serverless)
+2. Click **+ New Endpoint**
+3. Configure:
+   - **Container Image**: `yourusername/qwen3-vl-runpod:latest`
+   - **GPU Type**: RTX 4090 or better
+   - **Container Disk**: 20 GB
+   - **Environment Variables**:
+     ```
+     MODEL_NAME=Qwen/Qwen3-VL-8B-Instruct-FP8
+     MAX_MODEL_LEN=131072
+     GPU_MEMORY_UTILIZATION=0.90
+     HF_TOKEN=your_hf_token
+     ```
+4. Click **Deploy**
 
-## 📊 Cost & Performance Comparison
+#### Option B: Using RunPod API
 
-**1-hour Google Meet recording with app demo:**
+```python
+import runpod
 
-| Method | Time | Cost | Screen Analysis |
-|--------|------|------|----------------|
-| **Pod (RTX 4090 Spot)** | 15 min | **$0.06** | ✅ Full understanding |
-| **Pod (A100 80GB Spot)** | 6 min | **$0.15** | ✅ Full understanding |
-| Serverless YOLO | 35 min | $0.63 | ❌ Useless for screens |
+runpod.api_key = "your_runpod_api_key"
 
-**Winner**: Pod is 2-3× faster and 10× cheaper, and actually understands screen content!
+endpoint = runpod.Endpoint("your_endpoint_id")
 
-[⚖️ See detailed comparison](POD_VS_SERVERLESS.md)
+result = endpoint.run({
+    "video_url": "https://example.com/video.mp4",
+    "prompt": "Describe what happens in this video in detail.",
+    "max_tokens": 512,
+    "aggregate": True
+})
 
----
-
-## 📚 Documentation
-
-### Pod (Recommended)
-- [📖 Pod Setup & Usage Guide](pod/README.md) - Complete pod documentation
-- [⚖️ Pod vs Serverless](POD_VS_SERVERLESS.md) - Which to use and why
-- [🎯 VLM vs YOLO](VLM_VS_YOLO.md) - Why YOLO fails for screen recordings
-
-### Serverless (Legacy)
-- [📖 Serverless Documentation](#serverless-documentation-legacy) - Original serverless setup
-- [📖 GitHub Actions Setup](GITHUB_ACTIONS_SETUP.md) - Automated Docker builds
-- [📖 RunPod Endpoint Deployment](RUNPOD_ENDPOINT_DEPLOYMENT_GUIDE.md) - Serverless deployment
-
-### General
-- [📋 Implementation Plan](IMPLEMENTATION_PLAN.md) - Complete project roadmap
-- [📄 PRD](PRD.md) - Product requirements
-- [📊 Progress Tracker](PROGRESS.md) - Current status
-
----
-
-<a name="serverless-documentation-legacy"></a>
-## 📦 Serverless Documentation (Legacy)
-
-> **Note**: The serverless approach is not recommended for Google Meet recordings or screen shares.
-> YOLO cannot analyze screen content - it only detects generic objects (person, laptop, tv).
-> See [VLM_VS_YOLO.md](VLM_VS_YOLO.md) for details.
-
-## 🎯 Project Status
-
-**Current Phase**: Phase 1 Complete ✓
-
-- ✅ Phase 0: 40% (Automated tasks complete, manual RunPod setup pending)
-- ✅ Phase 1: 100% Complete
-- ⏳ Phase 2-12: Not started
-
-See [PROGRESS.md](PROGRESS.md) for detailed status.
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites Completed ✓
-
-- ✅ Python 3.13.3 installed
-- ✅ Docker 28.3.0 installed
-- ✅ Git 2.49.0 installed
-- ✅ Project structure created
-- ✅ Virtual environment configured
-- ✅ Dependencies installed
-
-### Next Steps (You Need To Do)
-
-1. **Create RunPod Account** ⏳
-   - Go to https://www.runpod.io/
-   - Sign up and verify email
-   - Add credits ($25-50 recommended for testing)
-
-2. **Get API Key** ⏳
-   - Login to RunPod dashboard
-   - Settings → API Keys → Create API Key
-   - Copy the key
-
-3. **Configure Environment** ⏳
-   ```powershell
-   # Edit .env file and add your API key
-   notepad .env
-   # Replace: RUNPOD_API_KEY=your_runpod_api_key_here
-   ```
-
-4. **Verify Setup**
-   ```powershell
-   .\venv\Scripts\python.exe scripts\test_setup.py
-   ```
-
----
-
-## 📁 Project Structure
-
-```
-e:\New folder (3)\runpod\
-├── config/              # Configuration files
-├── services/            # Service implementations
-│   ├── ingestion/      # Video/audio ingestion
-│   ├── detection/      # Object detection (RunPod YOLO client)
-│   ├── audio/          # Audio processing (RunPod Whisper client)
-│   └── vlm/            # Vision-language model (RunPod VLM client)
-├── data/               # Data storage
-│   ├── videos/         # Input videos
-│   └── frames/         # Extracted frames
-├── scripts/            # Utility scripts
-├── utils/              # Helper utilities
-├── tests/              # Test files
-├── venv/               # Python virtual environment
-├── .env                # Environment variables (ADD YOUR API KEY HERE!)
-├── requirements.txt    # Python dependencies
-└── IMPLEMENTATION_PLAN.md  # Detailed implementation guide
+print(result)
 ```
 
----
+## Usage
 
-## 🔧 Architecture
+### API Input Format
 
-This system uses **RunPod Serverless Endpoints** instead of local GPU inference:
-
-```
-LiveKit Stream → Ingestion Service → Redis
-                                      ↓
-                           ┌──────────┴──────────┐
-                           ↓                     ↓
-                 Detection Service      Audio Service
-                 (calls RunPod          (calls RunPod
-                  YOLO endpoint)        Whisper endpoint)
-                           ↓                     ↓
-                           └──────────┬──────────┘
-                                      ↓
-                              VLM Reasoning Service
-                              (calls RunPod VLM endpoint)
-                                      ↓
-                              PostgreSQL + Events
+```json
+{
+  "video_url": "https://example.com/long_video.mp4",
+  "prompt": "Analyze this video and describe all key events.",
+  "max_tokens": 512,
+  "temperature": 0.7,
+  "top_p": 0.8,
+  "top_k": 20,
+  "chunk_duration": 60.0,
+  "aggregate": true,
+  "aggregation_prompt": "Provide a comprehensive summary of the entire video:"
+}
 ```
 
-### Why RunPod Serverless?
+### Parameters
 
-✅ **No expensive GPUs needed** - No RTX 4090, A100, etc.
-✅ **Auto-scaling** - Scales from 0 to N workers automatically
-✅ **Pay-per-second** - Only pay when processing
-✅ **Develop anywhere** - Works on any laptop (Mac, Windows, Linux)
-✅ **Cost-effective** - ~$30-50/hour vs $200-400 for dedicated GPU
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `video_url` | string | **required** | URL to video file |
+| `video_path` | string | optional | Local path (alternative to URL) |
+| `prompt` | string | **required** | Analysis prompt |
+| `max_tokens` | int | 512 | Max tokens per chunk |
+| `temperature` | float | 0.7 | Sampling temperature |
+| `top_p` | float | 0.8 | Nucleus sampling |
+| `top_k` | int | 20 | Top-k sampling |
+| `chunk_duration` | float | 60.0 | Chunk duration in seconds |
+| `aggregate` | bool | true | Aggregate chunk results |
+| `aggregation_prompt` | string | auto | Custom aggregation prompt |
 
----
+### Response Format
 
-## 📋 Implementation Guide
-
-See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the complete, phase-by-phase implementation guide with 200+ testable tasks.
-
-### Phase Overview
-
-1. **Phase 0-1**: Environment Setup ✅ (mostly complete)
-2. **Phase 2**: Database & Storage Setup
-3. **Phase 3**: RunPod Endpoint Deployment
-4. **Phase 4**: Ingestion Service
-5. **Phase 5**: Detection Service (RunPod client)
-6. **Phase 6**: Audio Processing Service (RunPod client)
-7. **Phase 7**: VLM Reasoning Service (RunPod client)
-8. **Phase 8**: Docker Orchestration
-9. **Phase 9**: End-to-End Testing
-10. **Phase 10-12**: Advanced Features & Production
-
----
-
-## 🛠️ Development
-
-### Activate Virtual Environment
-
-```powershell
-# Windows PowerShell
-.\venv\Scripts\Activate.ps1
-
-# Or directly run Python
-.\venv\Scripts\python.exe
+```json
+{
+  "success": true,
+  "video_info": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30.0,
+    "duration": 180.5,
+    "total_frames": 5415
+  },
+  "num_chunks": 3,
+  "chunk_results": [
+    {
+      "chunk_index": 0,
+      "start_time": 0.0,
+      "end_time": 60.0,
+      "success": true,
+      "response": "The video begins with...",
+      "processing_time": 5.2
+    }
+  ],
+  "aggregated_response": "This video shows...",
+  "total_successful_chunks": 3,
+  "total_processing_time": 15.6
+}
 ```
 
-### Install Dependencies
+## Configuration
 
-```powershell
-.\venv\Scripts\pip.exe install -r requirements.txt
+### Environment Variables
+
+Configure via environment variables in RunPod:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MODEL_NAME` | `Qwen/Qwen3-VL-8B-Instruct-FP8` | Model identifier |
+| `MAX_MODEL_LEN` | `131072` | Max context length |
+| `GPU_MEMORY_UTILIZATION` | `0.90` | GPU memory fraction |
+| `TENSOR_PARALLEL_SIZE` | `1` | Number of GPUs |
+| `MAX_FRAMES_PER_CHUNK` | `768` | Max frames per chunk |
+| `CHUNK_DURATION` | `60.0` | Default chunk duration |
+| `CHUNK_OVERLAP` | `2.0` | Overlap between chunks |
+| `HF_TOKEN` | - | HuggingFace token |
+
+### Custom Configuration
+
+Edit [config.yaml](config.yaml) and rebuild Docker image for persistent changes.
+
+## Performance Optimization
+
+### 1. GPU Selection
+
+- **Best Performance**: A100 80GB, H100
+- **Cost-Effective**: RTX 4090, L40, A5000
+- **Minimum**: RTX 3090, A10G
+
+### 2. vLLM Optimizations
+
+```python
+# Enabled by default in Dockerfile
+ENV OMP_NUM_THREADS=1
+ENV VLLM_WORKER_MULTIPROC_METHOD=spawn
 ```
 
-### Run Tests
+### 3. Chunk Duration Tuning
 
-```powershell
-.\venv\Scripts\python.exe scripts\test_setup.py
+For high FPS videos (60fps+):
+```json
+{
+  "chunk_duration": 30.0  # Shorter chunks for more frames
+}
 ```
 
-### Building Docker Images
+For low FPS videos (24fps):
+```json
+{
+  "chunk_duration": 90.0  # Longer chunks OK
+}
+```
 
-**Option 1: Automated with GitHub Actions (Recommended)**
+## Error Handling
 
-Push your code to GitHub and let GitHub Actions build Docker images automatically:
+The system implements multiple error handling strategies:
 
+1. **Input Validation**: Video format, duration, codec verification
+2. **Chunk Size Calculation**: Automatic adjustment for frame budget
+3. **Retry Logic**: Exponential backoff for transient failures
+4. **Graceful Degradation**: FPS reduction if needed
+5. **Health Checks**: Pre-flight endpoint validation
+6. **Timeout Management**: Proper timeouts at each stage
+
+## Development
+
+### Local Testing
+
+1. **Install dependencies**:
 ```bash
-git add .
-git commit -m "Update endpoint code"
-git push origin main
+pip install -r requirements.txt
 ```
 
-Images are built 3x faster than local builds and pushed to Docker Hub automatically. See [GITHUB_ACTIONS_SETUP.md](GITHUB_ACTIONS_SETUP.md) for setup instructions.
-
-**Option 2: Manual Local Build**
-
+2. **Set environment variables**:
 ```bash
-# Build YOLO endpoint
-docker build -t <your-dockerhub-username>/yolo11-runpod:latest ./endpoints/yolo
-docker push <your-dockerhub-username>/yolo11-runpod:latest
-
-# Build Whisper endpoint
-docker build -t <your-dockerhub-username>/whisper-runpod:latest ./endpoints/whisper
-docker push <your-dockerhub-username>/whisper-runpod:latest
+export MODEL_NAME="Qwen/Qwen3-VL-8B-Instruct-FP8"
+export HF_TOKEN="your_token"
 ```
 
----
-
-## 📚 Documentation
-
-- [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) - Complete implementation guide
-- [PRD.md](PRD.md) - Product requirements document
-- [PROGRESS.md](PROGRESS.md) - Current progress tracker
-- [PHASE_0_1_SETUP_GUIDE.md](PHASE_0_1_SETUP_GUIDE.md) - Setup instructions
-- [PHASE_0_1_COMPLETE.md](PHASE_0_1_COMPLETE.md) - Completion summary
-- [GITHUB_ACTIONS_SETUP.md](GITHUB_ACTIONS_SETUP.md) - Automated Docker builds with GitHub Actions
-- [RUNPOD_ENDPOINT_DEPLOYMENT_GUIDE.md](RUNPOD_ENDPOINT_DEPLOYMENT_GUIDE.md) - RunPod deployment guide
-- [ENDPOINT_RESEARCH_SUMMARY.md](ENDPOINT_RESEARCH_SUMMARY.md) - Endpoint research findings
-
----
-
-## 🔑 Environment Variables
-
-Required in `.env` file:
-
+3. **Run locally**:
 ```bash
-# RunPod (Required for Phase 3+)
-RUNPOD_API_KEY=your_key_here              # ⚠️ REQUIRED
-RUNPOD_YOLO_ENDPOINT_ID=                   # From Phase 3
-RUNPOD_WHISPER_ENDPOINT_ID=                # From Phase 3
-RUNPOD_VLM_ENDPOINT_ID=                    # From Phase 3
-
-# Database (Required for Phase 2+)
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_DB=videoagent
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=change_me_in_production
-
-# Redis (Required for Phase 2+)
-REDIS_HOST=localhost
-REDIS_PORT=6379
-
-# Storage (Required for Phase 2+)
-MINIO_ENDPOINT=localhost:9000
-MINIO_ACCESS_KEY=admin
-MINIO_SECRET_KEY=changeme123
+cd src
+python handler.py
 ```
 
----
+### Testing with Sample Video
 
-## 💰 Cost Estimation
+```python
+import requests
 
-Based on RunPod serverless pricing:
+response = requests.post(
+    "http://localhost:8000/run",
+    json={
+        "input": {
+            "video_url": "https://example.com/test_video.mp4",
+            "prompt": "Describe this video."
+        }
+    }
+)
 
-- **YOLO Detection**: ~$0.0004 per image (RTX 4090)
-- **Whisper ASR**: ~$0.001 per minute of audio (A40)
-- **VLM Reasoning**: ~$0.003 per inference (A100)
-
-**Example**: Processing 1 hour of 30fps video ≈ $30-50
-
-Compare to dedicated GPU server: $200-400/hour
-
----
-
-## 🐛 Troubleshooting
-
-### "ModuleNotFoundError"
-```powershell
-.\venv\Scripts\pip.exe install -r requirements.txt
+print(response.json())
 ```
 
-### "Virtual environment not found"
-```powershell
-python -m venv venv
-.\venv\Scripts\pip.exe install -r requirements.txt
+## Monitoring
+
+### Logs
+
+View logs in RunPod console:
+- Request/response details
+- Processing times per chunk
+- Error messages with stack traces
+
+### Metrics
+
+Track in RunPod dashboard:
+- Total requests
+- Average processing time
+- Error rate
+- GPU utilization
+
+## Troubleshooting
+
+### Issue: Out of Memory
+
+**Solution**: Reduce `GPU_MEMORY_UTILIZATION` or `MAX_MODEL_LEN`
+
+```
+GPU_MEMORY_UTILIZATION=0.85
+MAX_MODEL_LEN=65536
 ```
 
-### "RunPod API key not set"
-Edit `.env` and add your RunPod API key from https://www.runpod.io/console
+### Issue: Slow Processing
+
+**Solution**:
+- Use FP8 quantized model
+- Reduce chunk duration
+- Enable tensor parallelism for multi-GPU
+
+### Issue: Frame Budget Exceeded
+
+**Solution**: System automatically adjusts FPS, but you can manually configure:
+
+```json
+{
+  "chunk_duration": 30.0,  // Shorter chunks
+  "max_frames_per_chunk": 600  // Reduce frame limit
+}
+```
+
+### Issue: Video Download Timeout
+
+**Solution**: Use `video_path` with pre-uploaded video or increase timeout in handler.
+
+## Contributing
+
+1. Fork the repository
+2. Create feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit changes (`git commit -m 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing-feature`)
+5. Open Pull Request
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+## Citation
+
+```bibtex
+@software{qwen3vl_runpod,
+  title = {Qwen3-VL Video Processing on RunPod},
+  year = {2025},
+  url = {https://github.com/yourusername/qwen3-vl-runpod}
+}
+```
+
+## Acknowledgments
+
+- [Qwen Team](https://github.com/QwenLM/Qwen3-VL) for the amazing Qwen3-VL model
+- [vLLM Project](https://github.com/vllm-project/vllm) for the inference engine
+- [RunPod](https://runpod.io) for serverless GPU infrastructure
+
+## Support
+
+- Issues: [GitHub Issues](https://github.com/yourusername/qwen3-vl-runpod/issues)
+- Discussions: [GitHub Discussions](https://github.com/yourusername/qwen3-vl-runpod/discussions)
+- RunPod Support: [RunPod Discord](https://discord.gg/runpod)
 
 ---
 
-## 🤝 Contributing
-
-This is an implementation of the [PRD.md](PRD.md) specification using RunPod serverless infrastructure.
-
----
-
-## 📄 License
-
-[Add your license here]
-
----
-
-## 🔗 Resources
-
-- **RunPod**: https://www.runpod.io/
-- **RunPod Docs**: https://docs.runpod.io/
-- **RunPod Serverless**: https://docs.runpod.io/serverless/overview
-
----
-
-**Status**: ✅ Phase 1 Complete | ⏳ Awaiting RunPod Account Setup | 🚀 Ready to Deploy Endpoints
-
-*Last updated: 2025-01-XX*
+**Built with d for the AI community**

@@ -1,63 +1,102 @@
 # Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
 venv/
 env/
-*.pyc
-__pycache__/
-*.pyo
-*.pyd
-.Python
-*.so
-*.egg
-*.egg-info/
-dist/
-build/
+ENV/
+.venv
+venv.bak/
 
-# Environment variables
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# Environments
 .env
 .env.local
+.env.*.local
 
-# Data and models
-data/videos/*
-data/frames/*
-!data/videos/.gitkeep
-!data/frames/.gitkeep
-models/
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.hypothesis/
+
+# Logs
+*.log
 logs/
-outputs/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
 
 # OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
-desktop.ini
-
-# Docker
-docker-compose.override.yml
 
 # Temporary files
+tmp/
+temp/
 *.tmp
-*.log
-*.cache
+*.bak
+*.swp
+*~
 
-# Output and processing results
-output/
+# Model cache
+cache/
+.cache/
+models/
+
+# Video files (for testing)
 *.mp4
 *.avi
 *.mov
-*.json
-!package.json
-!tsconfig.json
+*.mkv
+videos/
 
-# Legacy files (archived)
-legacy/
+# Generated files
+frames/
+chunks/
+output/
 
-# Pod job data
-pod/jobs/
-pod/results/
-pod/uploads/
+# Docker
+.dockerignore
+
+# Secrets
+secrets.yaml
+*.pem
+*.key
